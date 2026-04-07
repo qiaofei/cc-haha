@@ -214,6 +214,7 @@ export const en = {
   'newTask.monthly': 'Monthly',
   'newTask.delayNote': 'Scheduled tasks use a randomized delay of several minutes for server performance.',
   'newTask.create': 'Create task',
+  'newTask.promptPlaceholder': 'Look at the commits from the last 24 hours. Summarize what changed, call out any risky patterns or missing tests, and note anything worth following up on.',
 
   // ─── Prompt Editor ──────────────────────────────────────
   'promptEditor.worktree': 'worktree',

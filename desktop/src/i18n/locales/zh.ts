@@ -216,6 +216,7 @@ export const zh: Record<TranslationKey, string> = {
   'newTask.monthly': '每月',
   'newTask.delayNote': '定时任务会使用随机延迟以优化服务器性能。',
   'newTask.create': '创建任务',
+  'newTask.promptPlaceholder': '查看过去 24 小时的提交。总结变更内容，标记有风险的模式或缺失的测试，并记录值得跟进的事项。',
 
   // ─── Prompt Editor ──────────────────────────────────────
   'promptEditor.worktree': '工作树',

@@ -131,7 +131,7 @@ export function NewTaskModal({ open, onClose }: Props) {
         <PromptEditor
           value={prompt}
           onChange={setPrompt}
-          placeholder="Look at the commits from the last 24 hours. Summarize what changed, call out any risky patterns or missing tests, and note anything worth following up on."
+          placeholder={t('newTask.promptPlaceholder')}
           permissionMode={permissionMode}
           onPermissionModeChange={setPermissionMode}
           modelId={model}
