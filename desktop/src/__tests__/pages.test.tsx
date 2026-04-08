@@ -11,7 +11,6 @@ import { ScheduledTasks } from '../pages/ScheduledTasks'
 import { ToolInspection } from '../pages/ToolInspection'
 
 // Layout components (chrome is now here, not in pages)
-import { AppShell } from '../components/layout/AppShell'
 import { Sidebar } from '../components/layout/Sidebar'
 import { UserMessage } from '../components/chat/UserMessage'
 import { useChatStore } from '../stores/chatStore'
