@@ -11,8 +11,11 @@ import { PROVIDER_PRESETS } from '../config/providerPresets'
 import type { ProviderPreset } from '../config/providerPresets'
 import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping } from '../types/provider'
 import { AdapterSettings } from './AdapterSettings'
+import { useSkillStore } from '../stores/skillStore'
+import { SkillList } from '../components/skills/SkillList'
+import { SkillDetail } from '../components/skills/SkillDetail'
 
-type SettingsTab = 'providers' | 'permissions' | 'general' | 'adapters'
+type SettingsTab = 'providers' | 'permissions' | 'general' | 'adapters' | 'skills'
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('providers')
@@ -27,6 +30,7 @@ export function Settings() {
           <TabButton icon="shield" label={t('settings.tab.permissions')} active={activeTab === 'permissions'} onClick={() => setActiveTab('permissions')} />
           <TabButton icon="tune" label={t('settings.tab.general')} active={activeTab === 'general'} onClick={() => setActiveTab('general')} />
           <TabButton icon="chat" label={t('settings.tab.adapters')} active={activeTab === 'adapters'} onClick={() => setActiveTab('adapters')} />
+          <TabButton icon="auto_awesome" label={t('settings.tab.skills')} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} />
         </div>
 
         {/* Tab content */}
@@ -35,6 +39,7 @@ export function Settings() {
           {activeTab === 'permissions' && <PermissionSettings />}
           {activeTab === 'general' && <GeneralSettings />}
           {activeTab === 'adapters' && <AdapterSettings />}
+          {activeTab === 'skills' && <SkillSettings />}
         </div>
       </div>
     </div>
@@ -600,6 +605,33 @@ function GeneralSettings() {
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ─── Skill Settings ──────────────────────────────────────
+
+function SkillSettings() {
+  const selectedSkill = useSkillStore((s) => s.selectedSkill)
+  const t = useTranslation()
+
+  if (selectedSkill) {
+    return (
+      <div className="max-w-3xl">
+        <SkillDetail />
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+        {t('settings.skills.title')}
+      </h2>
+      <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
+        {t('settings.skills.description')}
+      </p>
+      <SkillList />
     </div>
   )
 }
