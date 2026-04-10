@@ -1,6 +1,7 @@
 import { CodeViewer } from './CodeViewer'
 import { useState } from 'react'
 import { useTranslation } from '../../i18n'
+import { InlineImageGallery } from './InlineImageGallery'
 
 type Props = {
   content: unknown
@@ -55,6 +56,9 @@ export function ToolResultBlock({ content, isError, toolName, standalone = true 
           {isError ? t('tool.error') : t('tool.success')}
         </span>
       </button>
+
+      {/* Inline image gallery from detected paths */}
+      <InlineImageGallery text={text} />
 
       {/* Content */}
       {expanded ? (

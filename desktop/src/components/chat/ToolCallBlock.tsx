@@ -4,11 +4,14 @@ import { DiffViewer } from './DiffViewer'
 import { TerminalChrome } from './TerminalChrome'
 import { CopyButton } from '../shared/CopyButton'
 import { useTranslation } from '../../i18n'
+import { InlineImageGallery } from './InlineImageGallery'
+import type { AgentTaskNotification } from '../../types/chat'
 
 type Props = {
   toolName: string
   input: unknown
   result?: { content: unknown; isError: boolean } | null
+  agentTaskNotification?: AgentTaskNotification
   compact?: boolean
 }
 
@@ -126,20 +129,23 @@ function renderPreview(
     const text = extractTextContent(result.content)
     if (text) {
       return (
-        <div className={`overflow-hidden rounded-lg border ${
-          result.isError
-            ? 'border-[var(--color-error)]/20 bg-[var(--color-error-container)]/60'
-            : 'border-[var(--color-border)] bg-[var(--color-surface)]'
-        }`}>
-          <div className="flex items-center justify-between border-b border-[var(--color-border)]/60 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-outline)]">
-            <span>{result.isError ? t?.('tool.errorOutput') ?? 'Error Output' : t?.('tool.toolOutput') ?? 'Tool Output'}</span>
-            <CopyButton
-              text={text}
-              className="rounded-md border border-[var(--color-border)] px-2 py-1 text-[10px] normal-case tracking-normal text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)]"
-            />
+        <>
+          <InlineImageGallery text={text} />
+          <div className={`overflow-hidden rounded-lg border ${
+            result.isError
+              ? 'border-[var(--color-error)]/20 bg-[var(--color-error-container)]/60'
+              : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+          }`}>
+            <div className="flex items-center justify-between border-b border-[var(--color-border)]/60 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-outline)]">
+              <span>{result.isError ? t?.('tool.errorOutput') ?? 'Error Output' : t?.('tool.toolOutput') ?? 'Tool Output'}</span>
+              <CopyButton
+                text={text}
+                className="rounded-md border border-[var(--color-border)] px-2 py-1 text-[10px] normal-case tracking-normal text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)]"
+              />
+            </div>
+            <CodeViewer code={text} language="plaintext" maxLines={18} />
           </div>
-          <CodeViewer code={text} language="plaintext" maxLines={18} />
-        </div>
+        </>
       )
     }
   }

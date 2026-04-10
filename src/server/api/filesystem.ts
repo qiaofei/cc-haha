@@ -6,12 +6,66 @@
 import * as path from 'path'
 import * as fs from 'fs'
 
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif',
+}
+
 export async function handleFilesystemRoute(pathname: string, url: URL): Promise<Response> {
   if (pathname === '/api/filesystem/browse') {
     return handleBrowse(url)
   }
 
+  if (pathname === '/api/filesystem/file') {
+    return handleServeFile(url)
+  }
+
   return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+}
+
+async function handleServeFile(url: URL): Promise<Response> {
+  const filePath = url.searchParams.get('path')
+  if (!filePath) {
+    return json({ error: 'Missing path parameter' }, 400)
+  }
+
+  const resolvedPath = path.resolve(filePath)
+  const ext = path.extname(resolvedPath).toLowerCase()
+  const mimeType = IMAGE_MIME_TYPES[ext]
+
+  if (!mimeType) {
+    return json({ error: 'Unsupported file type' }, 400)
+  }
+
+  try {
+    const stat = fs.statSync(resolvedPath)
+    if (!stat.isFile()) {
+      return json({ error: 'Not a file' }, 400)
+    }
+    // Limit to 50MB
+    if (stat.size > 50 * 1024 * 1024) {
+      return json({ error: 'File too large' }, 400)
+    }
+
+    const data = fs.readFileSync(resolvedPath)
+    return new Response(data, {
+      status: 200,
+      headers: {
+        'Content-Type': mimeType,
+        'Content-Length': String(stat.size),
+        'Cache-Control': 'private, max-age=3600',
+      },
+    })
+  } catch {
+    return json({ error: 'File not found' }, 404)
+  }
 }
 
 async function handleBrowse(url: URL): Promise<Response> {

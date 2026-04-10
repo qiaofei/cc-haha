@@ -2,16 +2,22 @@ import { useEffect, useMemo } from 'react'
 import { useTabStore } from '../stores/tabStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useChatStore } from '../stores/chatStore'
+import { useCLITaskStore } from '../stores/cliTaskStore'
 import { MessageList } from '../components/chat/MessageList'
 import { ChatInput } from '../components/chat/ChatInput'
 import { TeamStatusBar } from '../components/teams/TeamStatusBar'
 import { SessionTaskBar } from '../components/chat/SessionTaskBar'
+
+const TASK_POLL_INTERVAL_MS = 1000
 
 export function ActiveSession() {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessions = useSessionStore((s) => s.sessions)
   const connectToSession = useChatStore((s) => s.connectToSession)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
+  const fetchSessionTasks = useCLITaskStore((s) => s.fetchSessionTasks)
+  const trackedTaskSessionId = useCLITaskStore((s) => s.sessionId)
+  const hasIncompleteTasks = useCLITaskStore((s) => s.tasks.some((task) => task.status !== 'completed'))
   const chatState = sessionState?.chatState ?? 'idle'
   const tokenUsage = sessionState?.tokenUsage ?? { input_tokens: 0, output_tokens: 0 }
 
@@ -22,6 +28,30 @@ export function ActiveSession() {
       connectToSession(activeTabId)
     }
   }, [activeTabId, connectToSession])
+
+  useEffect(() => {
+    if (!activeTabId) return
+
+    const shouldPollTasks =
+      chatState !== 'idle' ||
+      (trackedTaskSessionId === activeTabId && hasIncompleteTasks)
+
+    if (!shouldPollTasks) return
+
+    void fetchSessionTasks(activeTabId)
+
+    const timer = setInterval(() => {
+      void fetchSessionTasks(activeTabId)
+    }, TASK_POLL_INTERVAL_MS)
+
+    return () => clearInterval(timer)
+  }, [
+    activeTabId,
+    chatState,
+    trackedTaskSessionId,
+    hasIncompleteTasks,
+    fetchSessionTasks,
+  ])
 
   const isActive = chatState !== 'idle'
   const totalTokens = tokenUsage.input_tokens + tokenUsage.output_tokens

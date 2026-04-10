@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 node_modules
+.DS_Store
 
 # Computer Use runtime (auto-generated)
 .runtime/
@@ -21,6 +22,7 @@ desktop/dist/
 desktop/src-tauri/binaries/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
+desktop/package-lock.json
 
 # Desktop brand asset candidates (keep only selected ones in public/)
 desktop/brand-assets/
@@ -35,7 +37,7 @@ docs/superpowers/
 /*.png
 
 # TS build cache
-desktop/tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # Temp markdown snapshots
 sidebar-snapshot.md

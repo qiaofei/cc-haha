@@ -130,6 +130,9 @@ bun run feishu
 
 飞书当前支持文本命令和中文别名：
 
+- `/help` 或 `帮助`
+- `/status` 或 `状态`
+- `/clear` 或 `清空`
 - `/projects` 或 `项目列表`
 - `/new` 或 `新会话`
 - `/stop` 或 `停止`

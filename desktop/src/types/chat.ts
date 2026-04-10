@@ -63,6 +63,14 @@ export type TeamMemberStatus = {
   currentTask?: string
 }
 
+export type AgentTaskNotification = {
+  taskId: string
+  toolUseId: string
+  status: 'completed' | 'failed' | 'stopped'
+  summary?: string
+  outputFile?: string
+}
+
 // ─── UI Message model (rendered in MessageList) ───────────────────
 
 export type TaskSummaryItem = {

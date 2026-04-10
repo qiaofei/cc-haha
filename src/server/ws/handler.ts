@@ -202,10 +202,23 @@ async function handleUserMessage(
     titleState.firstUserMessage = message.content
   }
 
-  // (Re-)register output callback — WS object may have changed on reconnect.
-  // Clear old callbacks and set the current one for this WS connection.
+  // Register the callback before sending the turn so startup errors are not lost.
+  // Keep output muted until the current user turn is enqueued to avoid forwarding
+  // any pre-turn SDK chatter as fresh chat history.
+  let userMessageSent = false
+
   conversationService.clearOutputCallbacks(sessionId)
   conversationService.onOutput(sessionId, (cliMsg) => {
+    // Before the current turn is sent, only surface startup errors.
+    if (!userMessageSent) {
+      if (cliMsg.type === 'result' && cliMsg.is_error) {
+        const serverMsgs = translateCliMessage(cliMsg, sessionId)
+        for (const msg of serverMsgs) {
+          sendMessage(ws, msg)
+        }
+      }
+      return
+    }
     const serverMsgs = translateCliMessage(cliMsg, sessionId)
     for (const msg of serverMsgs) {
       sendMessage(ws, msg)
@@ -216,8 +229,7 @@ async function handleUserMessage(
     }
   })
 
-  // 将用户消息写入 CLI stdin
-  const sent = await conversationService.sendMessage(
+  const sent = conversationService.sendMessage(
     sessionId,
     message.content,
     message.attachments
@@ -229,7 +241,10 @@ async function handleUserMessage(
       code: 'CLI_NOT_RUNNING',
     })
     sendMessage(ws, { type: 'status', state: 'idle' })
+    return
   }
+
+  userMessageSent = true
 }
 
 function handlePermissionResponse(

@@ -20,6 +20,8 @@ function extractUserText(message: any): string {
 
 const sdkUrl = getArg('--sdk-url')
 const sessionId = getArg('--session-id') || crypto.randomUUID()
+const initMode = process.env.MOCK_SDK_INIT_MODE || 'on_open'
+let initSent = false
 
 if (!sdkUrl) {
   console.error('Missing --sdk-url')
@@ -28,7 +30,9 @@ if (!sdkUrl) {
 
 const ws = new WebSocket(sdkUrl)
 
-ws.addEventListener('open', () => {
+function sendInit() {
+  if (initSent) return
+  initSent = true
   emit(ws, {
     type: 'system',
     subtype: 'init',
@@ -36,6 +40,12 @@ ws.addEventListener('open', () => {
     slash_commands: [{ name: 'help', description: 'Show help' }],
     session_id: sessionId,
   })
+}
+
+ws.addEventListener('open', () => {
+  if (initMode !== 'on_first_user') {
+    sendInit()
+  }
 })
 
 ws.addEventListener('message', (event) => {
@@ -46,6 +56,7 @@ ws.addEventListener('message', (event) => {
     const parsed = JSON.parse(line)
 
     if (parsed.type === 'user') {
+      sendInit()
       const text = extractUserText(parsed)
       emit(ws, {
         type: 'stream_event',

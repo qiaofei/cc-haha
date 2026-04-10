@@ -163,6 +163,29 @@ describe('WebSocket Chat Integration', () => {
   let wsUrl: string
   let tmpDir: string
 
+  async function withMockInitMode<T>(
+    mode: string | undefined,
+    callback: () => Promise<T>,
+  ): Promise<T> {
+    const previousMode = process.env.MOCK_SDK_INIT_MODE
+
+    if (mode) {
+      process.env.MOCK_SDK_INIT_MODE = mode
+    } else {
+      delete process.env.MOCK_SDK_INIT_MODE
+    }
+
+    try {
+      return await callback()
+    } finally {
+      if (previousMode === undefined) {
+        delete process.env.MOCK_SDK_INIT_MODE
+      } else {
+        process.env.MOCK_SDK_INIT_MODE = previousMode
+      }
+    }
+  }
+
   async function runTurn(sessionId: string, content: string): Promise<any[]> {
     const messages: any[] = []
     const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
@@ -329,6 +352,20 @@ describe('WebSocket Chat Integration', () => {
     // Verify thinking was first status
     const statusMsgs = messages.filter((m) => m.type === 'status')
     expect(statusMsgs[0].state).toBe('thinking')
+  })
+
+  it('should continue chat when SDK init arrives only after the first user turn', async () => {
+    const messages = await withMockInitMode('on_first_user', () =>
+      runTurn('chat-test-lazy-init', 'Hello after lazy init'),
+    )
+
+    expect(messages.some((m) => m.type === 'message_complete')).toBe(true)
+    expect(messages.some((m) => m.type === 'error')).toBe(false)
+    expect(
+      messages.some(
+        (m) => m.type === 'system_notification' && m.subtype === 'init',
+      ),
+    ).toBe(true)
   })
 
   it('should handle permission_response without error', async () => {

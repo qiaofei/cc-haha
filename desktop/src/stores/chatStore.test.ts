@@ -131,6 +131,7 @@ describe('chatStore history mapping', () => {
           elapsedSeconds: 0,
           statusVerb: '',
           slashCommands: [],
+          agentTaskNotifications: {},
           elapsedTimer: null,
         },
       },
@@ -186,6 +187,7 @@ describe('chatStore history mapping', () => {
           elapsedSeconds: 0,
           statusVerb: '',
           slashCommands: [],
+          agentTaskNotifications: {},
           elapsedTimer: null,
         },
       },
@@ -195,6 +197,54 @@ describe('chatStore history mapping', () => {
     expect(sendMock).toHaveBeenCalledWith('session-1', {
       type: 'set_permission_mode',
       mode: 'acceptEdits',
+    })
+  })
+
+  it('stores terminal task notifications for agent tool cards', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: {
+          messages: [],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'system_notification',
+      subtype: 'task_notification',
+      data: {
+        task_id: 'agent-task-1',
+        tool_use_id: 'agent-tool-1',
+        status: 'completed',
+        summary: 'Agent "修复异常处理" completed',
+        output_file: '/tmp/agent-output.txt',
+      },
+    })
+
+    expect(
+      useChatStore.getState().sessions[TEST_SESSION_ID]?.agentTaskNotifications[
+        'agent-tool-1'
+      ],
+    ).toMatchObject({
+      taskId: 'agent-task-1',
+      toolUseId: 'agent-tool-1',
+      status: 'completed',
+      summary: 'Agent "修复异常处理" completed',
+      outputFile: '/tmp/agent-output.txt',
     })
   })
 })

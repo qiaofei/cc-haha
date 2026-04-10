@@ -317,6 +317,7 @@ export const en = {
   'agentStatus.running': 'Running',
   'agentStatus.done': 'Done',
   'agentStatus.failed': 'Failed',
+  'agentStatus.stopped': 'Stopped',
   'agentStatus.noActivity': 'No tool activity yet',
   'agentStatus.viewResult': 'View result',
   'agentStatus.resultTitle': 'Agent result',

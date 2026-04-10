@@ -23,6 +23,7 @@ function makeSessionState(overrides: Partial<PerSessionState> = {}): PerSessionS
     elapsedSeconds: 0,
     statusVerb: '',
     slashCommands: [],
+    agentTaskNotifications: {},
     elapsedTimer: null,
     ...overrides,
   }
@@ -72,7 +73,7 @@ describe('MessageList nested tool calls', () => {
 
     const { container } = render(<MessageList />)
 
-    expect(screen.getByText('Running')).toBeTruthy()
+    expect(screen.getAllByText('Running').length).toBeGreaterThan(0)
     expect(screen.getByText(/Read .*example\.ts.*done/i)).toBeTruthy()
     expect(container.textContent).toContain('Agent')
   })
@@ -196,6 +197,40 @@ describe('MessageList nested tool calls', () => {
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByText(/第二段补充内容用于验证 dialog 展示的是完整结果而不是截断摘要。/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Close dialog' })).toBeTruthy()
+  })
+
+  it('keeps async launched agents in running state until a terminal notification arrives', () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'tool-agent',
+              type: 'tool_use',
+              toolName: 'Agent',
+              toolUseId: 'agent-1',
+              input: { description: '修复临时文件泄漏' },
+              timestamp: 1,
+            },
+            {
+              id: 'result-agent',
+              type: 'tool_result',
+              toolUseId: 'agent-1',
+              content:
+                "Async agent launched successfully.\nagentId: a29934b04b20ed564 (internal ID - do not mention to user. Use SendMessage with to: 'a29934b04b20ed564' to continue this agent.)\nThe agent is working in the background. You will be notified automatically when it completes.",
+              isError: false,
+              timestamp: 2,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    expect(screen.getAllByText('Running').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Done')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'View result' })).toBeNull()
   })
 
   it('renders copy controls for user messages and scopes assistant copy to a single reply', async () => {

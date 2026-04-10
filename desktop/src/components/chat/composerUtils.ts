@@ -20,6 +20,43 @@ export const FALLBACK_SLASH_COMMANDS = [
   { name: 'vim', description: 'Toggle vim editing mode' },
 ]
 
+export type SlashCommandOption = {
+  name: string
+  description: string
+}
+
+export function mergeSlashCommands(
+  preferred: ReadonlyArray<SlashCommandOption>,
+  fallback: ReadonlyArray<SlashCommandOption> = FALLBACK_SLASH_COMMANDS,
+): SlashCommandOption[] {
+  const merged = new Map<string, SlashCommandOption>()
+
+  for (const command of preferred) {
+    if (!command?.name) continue
+    merged.set(command.name, {
+      name: command.name,
+      description: command.description?.trim() || '',
+    })
+  }
+
+  for (const command of fallback) {
+    if (!command?.name) continue
+    const existing = merged.get(command.name)
+    if (existing) {
+      if (!existing.description && command.description) {
+        merged.set(command.name, {
+          ...existing,
+          description: command.description,
+        })
+      }
+      continue
+    }
+    merged.set(command.name, command)
+  }
+
+  return [...merged.values()]
+}
+
 export type SlashTrigger = {
   slashPos: number
   filter: string

@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react'
 import { marked, type Tokens } from 'marked'
 import { CodeViewer } from '../chat/CodeViewer'
+import { MermaidRenderer } from '../chat/MermaidRenderer'
 
 type Props = {
   content: string
@@ -14,13 +15,49 @@ type CodeBlock = {
   language: string | undefined
 }
 
+const MERMAID_LANGUAGE = 'mermaid'
+const PLAINTEXT_LANGUAGES = new Set(['', 'text', 'plaintext', 'plain'])
+const MERMAID_DIAGRAM_START = /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|gitGraph|mindmap|timeline|requirementDiagram|quadrantChart|xychart-beta|sankey-beta|block-beta|packet-beta|architecture|kanban)\b/i
+
+function normalizeCodeLanguage(language: string | undefined): string | undefined {
+  const normalized = language?.trim().split(/\s+/)[0]?.toLowerCase()
+  return normalized || undefined
+}
+
+function looksLikeMermaid(code: string): boolean {
+  const firstMeaningfulLine = code
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+
+  return firstMeaningfulLine ? MERMAID_DIAGRAM_START.test(firstMeaningfulLine) : false
+}
+
+function shouldRenderAsMermaid(block: CodeBlock): boolean {
+  const normalizedLanguage = normalizeCodeLanguage(block.language)
+
+  if (normalizedLanguage === MERMAID_LANGUAGE) {
+    return true
+  }
+
+  if (!PLAINTEXT_LANGUAGES.has(normalizedLanguage ?? '')) {
+    return false
+  }
+
+  return looksLikeMermaid(block.code)
+}
+
 const renderer = new marked.Renderer()
 
 let pendingCodeBlocks: CodeBlock[] = []
 
 renderer.code = function ({ text, lang }: Tokens.Code) {
   const id = `cb-${pendingCodeBlocks.length}`
-  pendingCodeBlocks.push({ id, code: text, language: lang || undefined })
+  pendingCodeBlocks.push({
+    id,
+    code: text,
+    language: normalizeCodeLanguage(lang || undefined),
+  })
   return `<div data-codeblock-id="${id}"></div>`
 }
 
@@ -146,6 +183,8 @@ export function MarkdownRenderer({ content, variant = 'default', className }: Pr
       {parts.map((part, i) =>
         part.type === 'html' ? (
           <div key={i} dangerouslySetInnerHTML={{ __html: part.content }} />
+        ) : shouldRenderAsMermaid(part.block) ? (
+          <MermaidRenderer key={part.block.id} code={part.block.code} />
         ) : (
           <div key={part.block.id} className="my-4">
             <CodeViewer

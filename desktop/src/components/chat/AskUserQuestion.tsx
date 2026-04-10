@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useTabStore } from '../../stores/tabStore'
 import { useTranslation } from '../../i18n'
@@ -55,6 +55,7 @@ export function AskUserQuestion({ toolUseId: _toolUseId, input }: Props) {
   const [selections, setSelections] = useState<Record<number, string>>({})
   const [freeText, setFreeText] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const composingRef = useRef(false)
 
   if (questions.length === 0) return null
 
@@ -223,7 +224,10 @@ export function AskUserQuestion({ toolUseId: _toolUseId, input }: Props) {
                 setFreeText(e.target.value)
                 if (e.target.value.trim()) setSelections({})
               }}
+              onCompositionStart={() => { composingRef.current = true }}
+              onCompositionEnd={() => { composingRef.current = false }}
               onKeyDown={(e) => {
+                if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return
                 if (e.key === 'Enter' && allAnswered) handleSubmit()
               }}
               placeholder={t('question.typePlaceholder')}

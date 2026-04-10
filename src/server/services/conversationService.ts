@@ -114,7 +114,7 @@ export class ConversationService {
         cwd: workDir,
         env: { ...process.env, CLAUDE_CODE_ENABLE_TASKS: '1' },
         stdin: 'pipe',
-        stdout: 'pipe',
+        stdout: 'ignore',  // CLI communicates via SDK WebSocket, not stdout
         stderr: 'pipe',
       })
     } catch (spawnErr) {

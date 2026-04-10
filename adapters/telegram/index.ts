@@ -6,12 +6,18 @@
  */
 
 import { Bot, InlineKeyboard, type Context } from 'grammy'
+import * as path from 'node:path'
 import { WsBridge, type ServerMessage } from '../common/ws-bridge.js'
 import { MessageBuffer } from '../common/message-buffer.js'
 import { MessageDedup } from '../common/message-dedup.js'
 import { enqueue } from '../common/chat-queue.js'
 import { loadConfig } from '../common/config.js'
-import { splitMessage, formatToolUse, formatPermissionRequest } from '../common/format.js'
+import {
+  formatImHelp,
+  formatImStatus,
+  formatPermissionRequest,
+  splitMessage,
+} from '../common/format.js'
 import { SessionStore } from '../common/session-store.js'
 import { AdapterHttpClient } from '../common/http-client.js'
 import { isAllowedUser, tryPair } from '../common/pairing.js'
@@ -40,6 +46,14 @@ const accumulatedText = new Map<string, string>()
 const buffers = new Map<string, MessageBuffer>()
 // Track chats waiting for project selection
 const pendingProjectSelection = new Map<string, boolean>()
+const runtimeStates = new Map<string, ChatRuntimeState>()
+
+type ChatRuntimeState = {
+  state: 'idle' | 'thinking' | 'streaming' | 'tool_executing' | 'permission_pending'
+  verb?: string
+  model?: string
+  pendingPermissionCount: number
+}
 
 // ---------- helpers ----------
 
@@ -52,6 +66,90 @@ function getBuffer(chatId: string): MessageBuffer {
     buffers.set(chatId, buf)
   }
   return buf
+}
+
+function getRuntimeState(chatId: string): ChatRuntimeState {
+  let state = runtimeStates.get(chatId)
+  if (!state) {
+    state = { state: 'idle', pendingPermissionCount: 0 }
+    runtimeStates.set(chatId, state)
+  }
+  return state
+}
+
+function clearTransientChatState(chatId: string): void {
+  placeholders.delete(chatId)
+  accumulatedText.delete(chatId)
+  buffers.get(chatId)?.reset()
+  const runtime = getRuntimeState(chatId)
+  runtime.state = 'idle'
+  runtime.verb = undefined
+  runtime.pendingPermissionCount = 0
+}
+
+async function ensureExistingSession(chatId: string): Promise<{ sessionId: string; workDir: string } | null> {
+  const stored = sessionStore.get(chatId)
+  if (!stored) return null
+
+  if (!bridge.hasSession(chatId)) {
+    bridge.connectSession(chatId, stored.sessionId)
+    bridge.onServerMessage(chatId, (msg) => handleServerMessage(chatId, msg))
+    const opened = await bridge.waitForOpen(chatId)
+    if (!opened) return null
+  }
+
+  return stored
+}
+
+async function buildStatusText(chatId: string): Promise<string> {
+  const stored = await ensureExistingSession(chatId)
+  if (!stored) return formatImStatus(null)
+
+  const runtime = getRuntimeState(chatId)
+  let projectName = path.basename(stored.workDir) || stored.workDir
+  let branch: string | null = null
+
+  try {
+    const gitInfo = await httpClient.getGitInfo(stored.sessionId)
+    projectName = gitInfo.repoName || path.basename(gitInfo.workDir) || projectName
+    branch = gitInfo.branch
+  } catch {
+    // Ignore git lookup failures and fall back to stored workDir
+  }
+
+  let taskCounts:
+    | {
+        total: number
+        pending: number
+        inProgress: number
+        completed: number
+      }
+    | undefined
+
+  try {
+    const tasks = await httpClient.getTasksForSession(stored.sessionId)
+    if (tasks.length > 0) {
+      taskCounts = {
+        total: tasks.length,
+        pending: tasks.filter((task) => task.status === 'pending').length,
+        inProgress: tasks.filter((task) => task.status === 'in_progress').length,
+        completed: tasks.filter((task) => task.status === 'completed').length,
+      }
+    }
+  } catch {
+    // Ignore task lookup failures in IM status summary
+  }
+
+  return formatImStatus({
+    sessionId: stored.sessionId,
+    projectName,
+    branch,
+    model: runtime.model,
+    state: runtime.state,
+    verb: runtime.verb,
+    pendingPermissionCount: runtime.pendingPermissionCount,
+    taskCounts,
+  })
 }
 
 async function flushToTelegram(chatId: string, newText: string, isComplete: boolean): Promise<void> {
@@ -159,12 +257,15 @@ async function showProjectPicker(chatId: string): Promise<void> {
 async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<void> {
   const numericChatId = Number(chatId)
   const buf = getBuffer(chatId)
+  const runtime = getRuntimeState(chatId)
 
   switch (msg.type) {
     case 'connected':
       break
 
     case 'status':
+      runtime.state = msg.state
+      runtime.verb = typeof msg.verb === 'string' ? msg.verb : undefined
       if (msg.state === 'thinking' && !placeholders.has(chatId)) {
         const sent = await bot.api.sendMessage(numericChatId, '💭 思考中...')
         placeholders.set(chatId, { chatId, messageId: sent.message_id })
@@ -226,6 +327,8 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
       break
 
     case 'permission_request': {
+      runtime.pendingPermissionCount += 1
+      runtime.state = 'permission_pending'
       const text = formatPermissionRequest(msg.toolName, msg.input, msg.requestId)
       const keyboard = new InlineKeyboard()
         .text('✅ 允许', `permit:${msg.requestId}:yes`)
@@ -235,6 +338,8 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
     }
 
     case 'message_complete':
+      runtime.state = 'idle'
+      runtime.verb = undefined
       await buf.complete()
       // Ensure placeholder is always cleaned up even if buffer was already empty
       if (placeholders.has(chatId)) {
@@ -255,23 +360,30 @@ async function handleServerMessage(chatId: string, msg: ServerMessage): Promise<
       break
 
     case 'error':
+      runtime.state = 'idle'
+      runtime.verb = undefined
       await bot.api.sendMessage(numericChatId, `❌ ${msg.message}`)
+      break
+
+    case 'system_notification':
+      if (msg.subtype === 'init' && msg.data && typeof msg.data === 'object') {
+        const model = (msg.data as Record<string, unknown>).model
+        if (typeof model === 'string' && model.trim()) {
+          runtime.model = model
+        }
+      }
       break
   }
 }
 
 // ---------- bot handlers ----------
 
-bot.command('start', (ctx) => {
-  ctx.reply(
-    '👋 Claude Code Bot 已就绪。\n\n' +
-    '命令:\n' +
-    '/new — 新建会话（使用默认项目）\n' +
-    '/new <名称或编号> — 新建会话并指定项目\n' +
-    '/projects — 查看项目列表\n' +
-    '/stop — 停止生成'
-  )
-})
+async function sendHelp(ctx: Context): Promise<void> {
+  await ctx.reply(`👋 Claude Code Bot 已就绪。\n\n${formatImHelp()}`)
+}
+
+bot.command('start', (ctx) => void sendHelp(ctx))
+bot.command('help', (ctx) => void sendHelp(ctx))
 
 /** Reset session state and start a new session for chatId.
  *  If `query` is provided, match a project by index or name;
@@ -286,6 +398,7 @@ async function startNewSession(chatId: string, query?: string): Promise<void> {
   buffers.get(chatId)?.reset()
   buffers.delete(chatId)
   pendingProjectSelection.delete(chatId)
+  runtimeStates.delete(chatId)
 
   if (query) {
     try {
@@ -333,8 +446,38 @@ bot.command('projects', async (ctx) => {
 
 bot.command('stop', (ctx) => {
   const chatId = String(ctx.chat.id)
-  bridge.sendStopGeneration(chatId)
-  ctx.reply('⏹ 已发送停止信号。')
+  void (async () => {
+    const stored = await ensureExistingSession(chatId)
+    if (!stored) {
+      await ctx.reply(formatImStatus(null))
+      return
+    }
+    bridge.sendStopGeneration(chatId)
+    await ctx.reply('⏹ 已发送停止信号。')
+  })()
+})
+
+bot.command('status', async (ctx) => {
+  const chatId = String(ctx.chat.id)
+  await ctx.reply(await buildStatusText(chatId))
+})
+
+bot.command('clear', (ctx) => {
+  const chatId = String(ctx.chat.id)
+  void (async () => {
+    const stored = await ensureExistingSession(chatId)
+    if (!stored) {
+      await ctx.reply(formatImStatus(null))
+      return
+    }
+    clearTransientChatState(chatId)
+    const sent = bridge.sendUserMessage(chatId, '/clear')
+    if (!sent) {
+      await ctx.reply('⚠️ 无法发送 /clear，请先发送 /new 重新连接会话。')
+      return
+    }
+    await ctx.reply('🧹 已清空当前会话上下文。')
+  })()
 })
 
 bot.on('message:text', (ctx) => {
@@ -392,6 +535,8 @@ bot.on('callback_query:data', async (ctx) => {
   const chatId = String(ctx.callbackQuery.message?.chat.id)
 
   bridge.sendPermissionResponse(chatId, requestId, allowed)
+  const runtime = getRuntimeState(chatId)
+  runtime.pendingPermissionCount = Math.max(0, runtime.pendingPermissionCount - 1)
 
   const statusText = allowed ? '✅ 已允许' : '❌ 已拒绝'
   try {

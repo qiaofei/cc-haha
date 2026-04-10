@@ -13,7 +13,7 @@ import { PermissionDialog } from './PermissionDialog'
 import { AskUserQuestion } from './AskUserQuestion'
 import { StreamingIndicator } from './StreamingIndicator'
 import { InlineTaskSummary } from './InlineTaskSummary'
-import type { UIMessage } from '../../types/chat'
+import type { AgentTaskNotification, UIMessage } from '../../types/chat'
 
 type ToolCall = Extract<UIMessage, { type: 'tool_use' }>
 type ToolResult = Extract<UIMessage, { type: 'tool_result' }>
@@ -70,6 +70,7 @@ export function MessageList() {
   const chatState = sessionState?.chatState ?? 'idle'
   const streamingText = sessionState?.streamingText ?? ''
   const activeThinkingId = sessionState?.activeThinkingId ?? null
+  const agentTaskNotifications = sessionState?.agentTaskNotifications ?? {}
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -110,6 +111,7 @@ export function MessageList() {
                 toolCalls={item.toolCalls}
                 resultMap={toolResultMap}
                 childToolCallsByParent={childToolCallsByParent}
+                agentTaskNotifications={agentTaskNotifications}
                 isStreaming={
                   chatState === 'tool_executing' &&
                   item.toolCalls.some((tc) => !toolResultMap.has(tc.toolUseId))
@@ -124,6 +126,7 @@ export function MessageList() {
               key={msg.id}
               message={msg}
               activeThinkingId={activeThinkingId}
+              agentTaskNotifications={agentTaskNotifications}
               toolResult={
                 msg.type === 'tool_use'
                   ? (() => {
@@ -136,8 +139,8 @@ export function MessageList() {
           )
         })}
 
-        {streamingText && chatState === 'streaming' && (
-          <AssistantMessage content={streamingText} isStreaming />
+        {streamingText && (
+          <AssistantMessage content={streamingText} isStreaming={chatState === 'streaming'} />
         )}
 
         {/* Show StreamingIndicator when:
@@ -157,10 +160,12 @@ export function MessageList() {
 function MessageBlock({
   message,
   activeThinkingId,
+  agentTaskNotifications,
   toolResult,
 }: {
   message: UIMessage
   activeThinkingId: string | null
+  agentTaskNotifications: Record<string, AgentTaskNotification>
   toolResult?: { content: unknown; isError: boolean } | null
 }) {
   const t = useTranslation()
@@ -186,6 +191,11 @@ function MessageBlock({
           toolName={message.toolName}
           input={message.input}
           result={toolResult}
+          agentTaskNotification={
+            message.toolName === 'Agent'
+              ? agentTaskNotifications[message.toolUseId]
+              : undefined
+          }
         />
       )
     case 'tool_result':

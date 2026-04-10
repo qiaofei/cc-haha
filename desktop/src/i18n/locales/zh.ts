@@ -319,6 +319,7 @@ export const zh: Record<TranslationKey, string> = {
   'agentStatus.running': '进行中',
   'agentStatus.done': '完成',
   'agentStatus.failed': '失败',
+  'agentStatus.stopped': '已停止',
   'agentStatus.noActivity': '暂时还没有工具活动',
   'agentStatus.viewResult': '查看结果',
   'agentStatus.resultTitle': 'Agent 结果',

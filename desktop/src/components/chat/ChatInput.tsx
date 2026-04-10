@@ -14,6 +14,7 @@ import { FileSearchMenu, type FileSearchMenuHandle } from './FileSearchMenu'
 import {
   FALLBACK_SLASH_COMMANDS,
   findSlashTrigger,
+  mergeSlashCommands,
   replaceSlashToken,
 } from './composerUtils'
 
@@ -39,6 +40,7 @@ export function ChatInput() {
   const [atCursorPos, setAtCursorPos] = useState(-1)
   const [slashFilter, setSlashFilter] = useState('')
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
+  const composingRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
@@ -123,7 +125,7 @@ export function ChatInput() {
   }, [fileSearchOpen])
 
   const filteredCommands = useMemo(() => {
-    const source = slashCommands.length > 0 ? slashCommands : FALLBACK_SLASH_COMMANDS
+    const source = mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS)
     if (!slashFilter) return source
     const lower = slashFilter.toLowerCase()
     return source.filter((command) => (
@@ -228,7 +230,7 @@ export function ChatInput() {
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     // Ignore key events during IME composition (e.g. Chinese input method)
-    if (event.nativeEvent.isComposing) return
+    if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return
 
     // Route file search navigation keys to FileSearchMenu
     if (fileSearchOpen) {
@@ -450,6 +452,8 @@ export function ChatInput() {
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => { composingRef.current = true }}
+            onCompositionEnd={() => { composingRef.current = false }}
             onPaste={handlePaste}
             placeholder={
               isWorkspaceMissing

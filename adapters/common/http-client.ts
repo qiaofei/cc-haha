@@ -9,6 +9,19 @@ export type RecentProject = {
   sessionCount: number
 }
 
+export type GitInfo = {
+  branch: string | null
+  repoName: string | null
+  workDir: string
+  changedFiles: number
+}
+
+export type SessionTask = {
+  id: string
+  subject: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
 export class AdapterHttpClient {
   readonly httpBaseUrl: string
 
@@ -70,5 +83,25 @@ export class AdapterHttpClient {
     if (matches.length > 1) return { ambiguous: matches }
 
     return {}
+  }
+
+  async getGitInfo(sessionId: string): Promise<GitInfo> {
+    const res = await fetch(`${this.httpBaseUrl}/api/sessions/${encodeURIComponent(sessionId)}/git-info`)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(`Failed to load git info: ${(err as any).message}`)
+    }
+    return (await res.json()) as GitInfo
+  }
+
+  async getTasksForSession(sessionId: string): Promise<SessionTask[]> {
+    const res = await fetch(`${this.httpBaseUrl}/api/tasks/lists/${encodeURIComponent(sessionId)}`)
+    if (!res.ok) {
+      if (res.status === 404) return []
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(`Failed to load tasks: ${(err as any).message}`)
+    }
+    const data = (await res.json()) as { tasks?: SessionTask[] }
+    return Array.isArray(data.tasks) ? data.tasks : []
   }
 }

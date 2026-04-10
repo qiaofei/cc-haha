@@ -71,8 +71,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
 
@@ -170,7 +176,7 @@ jobs:
 
             ---
             See [Installation Guide](https://github.com/NanmiCoder/cc-haha/blob/main/docs/desktop/04-installation.md) for details.
-          releaseDraft: ${{ github.event.inputs.draft || true }}
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
           prerelease: false
           args: ${{ matrix.tauri_args }}
 

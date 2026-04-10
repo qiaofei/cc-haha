@@ -8,7 +8,15 @@ import { useTabStore } from './tabStore'
 import { randomSpinnerVerb } from '../config/spinnerVerbs'
 import type { MessageEntry } from '../types/session'
 import type { PermissionMode } from '../types/settings'
-import type { AttachmentRef, ChatState, UIAttachment, UIMessage, ServerMessage, TokenUsage } from '../types/chat'
+import type {
+  AgentTaskNotification,
+  AttachmentRef,
+  ChatState,
+  UIAttachment,
+  UIMessage,
+  ServerMessage,
+  TokenUsage,
+} from '../types/chat'
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
@@ -31,6 +39,7 @@ export type PerSessionState = {
   elapsedSeconds: number
   statusVerb: string
   slashCommands: Array<{ name: string; description: string }>
+  agentTaskNotifications: Record<string, AgentTaskNotification>
   elapsedTimer: ReturnType<typeof setInterval> | null
 }
 
@@ -48,6 +57,7 @@ const DEFAULT_SESSION_STATE: PerSessionState = {
   elapsedSeconds: 0,
   statusVerb: '',
   slashCommands: [],
+  agentTaskNotifications: {},
   elapsedTimer: null,
 }
 
@@ -259,12 +269,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
 
       case 'status':
-        update((session) => ({
-          chatState: msg.state,
-          ...(msg.verb && msg.verb !== 'Thinking' ? { statusVerb: msg.verb } : {}),
-          ...(msg.tokens ? { tokenUsage: { ...session.tokenUsage, output_tokens: msg.tokens } } : {}),
-          ...(msg.state === 'idle' ? { activeThinkingId: null, statusVerb: '' } : {}),
-        }))
+        update((session) => {
+          const pendingText = session.streamingText.trim()
+          const shouldFlush = pendingText && session.chatState === 'streaming' && msg.state !== 'streaming'
+          return {
+            chatState: msg.state,
+            ...(msg.verb && msg.verb !== 'Thinking' ? { statusVerb: msg.verb } : {}),
+            ...(msg.tokens ? { tokenUsage: { ...session.tokenUsage, output_tokens: msg.tokens } } : {}),
+            ...(msg.state === 'idle' ? { activeThinkingId: null, statusVerb: '' } : {}),
+            ...(shouldFlush ? {
+              messages: [...session.messages, { id: nextId(), type: 'assistant_text' as const, content: pendingText, timestamp: Date.now() }],
+              streamingText: '',
+            } : {}),
+          }
+        })
         if (msg.state === 'idle') {
           const session = get().sessions[sessionId]
           if (session?.elapsedTimer) {
@@ -389,10 +407,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       case 'error':
-        update((s) => ({
-          messages: [...s.messages, { id: nextId(), type: 'error', message: msg.message, code: msg.code, timestamp: Date.now() }],
-          chatState: 'idle', activeThinkingId: null,
-        }))
+        update((s) => {
+          const pendingText = s.streamingText.trim()
+          const newMessages = [...s.messages]
+          if (pendingText) {
+            newMessages.push({ id: nextId(), type: 'assistant_text' as const, content: pendingText, timestamp: Date.now() })
+          }
+          newMessages.push({ id: nextId(), type: 'error', message: msg.message, code: msg.code, timestamp: Date.now() })
+          return { messages: newMessages, chatState: 'idle', activeThinkingId: null, streamingText: '' }
+        })
         useTabStore.getState().updateTabStatus(sessionId, 'error')
         {
           const session = get().sessions[sessionId]
@@ -421,6 +444,42 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'system_notification':
         if (msg.subtype === 'slash_commands' && Array.isArray(msg.data)) {
           update(() => ({ slashCommands: msg.data as Array<{ name: string; description: string }> }))
+        }
+        if (msg.subtype === 'task_notification' && msg.data && typeof msg.data === 'object') {
+          const data = msg.data as Record<string, unknown>
+          const toolUseId =
+            typeof data.tool_use_id === 'string' && data.tool_use_id.trim()
+              ? data.tool_use_id
+              : null
+          const taskStatus = data.status
+          if (
+            toolUseId &&
+            (taskStatus === 'completed' ||
+              taskStatus === 'failed' ||
+              taskStatus === 'stopped')
+          ) {
+            update((session) => ({
+              agentTaskNotifications: {
+                ...session.agentTaskNotifications,
+                [toolUseId]: {
+                  taskId:
+                    typeof data.task_id === 'string' && data.task_id.trim()
+                      ? data.task_id
+                      : toolUseId,
+                  toolUseId,
+                  status: taskStatus,
+                  summary:
+                    typeof data.summary === 'string' && data.summary.trim()
+                      ? data.summary
+                      : undefined,
+                  outputFile:
+                    typeof data.output_file === 'string' && data.output_file.trim()
+                      ? data.output_file
+                      : undefined,
+                },
+              },
+            }))
+          }
         }
         break
       case 'pong':

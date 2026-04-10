@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { findSlashToken, insertSlashTrigger, replaceSlashCommand } from './composerUtils'
+import {
+  findSlashToken,
+  insertSlashTrigger,
+  mergeSlashCommands,
+  replaceSlashCommand,
+} from './composerUtils'
 
 describe('composerUtils', () => {
   it('finds slash token without trailing space', () => {
@@ -21,5 +26,30 @@ describe('composerUtils', () => {
       value: '/review ',
       cursorPos: 8,
     })
+  })
+
+  it('merges fallback commands so built-in entries like /clear remain visible', () => {
+    expect(
+      mergeSlashCommands([
+        { name: 'help', description: '' },
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        { name: 'help', description: 'Show available commands' },
+        { name: 'clear', description: 'Clear conversation history' },
+      ]),
+    )
+  })
+
+  it('keeps server-provided descriptions when they exist', () => {
+    expect(
+      mergeSlashCommands([
+        { name: 'clear', description: 'Server description' },
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        { name: 'clear', description: 'Server description' },
+      ]),
+    )
   })
 })

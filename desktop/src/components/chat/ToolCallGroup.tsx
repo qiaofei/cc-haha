@@ -3,7 +3,7 @@ import { ToolCallBlock } from './ToolCallBlock'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import { Modal } from '../shared/Modal'
 import { useTranslation } from '../../i18n'
-import type { UIMessage } from '../../types/chat'
+import type { AgentTaskNotification, UIMessage } from '../../types/chat'
 
 type ToolCall = Extract<UIMessage, { type: 'tool_use' }>
 type ToolResult = Extract<UIMessage, { type: 'tool_result' }>
@@ -12,6 +12,7 @@ type Props = {
   toolCalls: ToolCall[]
   resultMap: Map<string, ToolResult>
   childToolCallsByParent: Map<string, ToolCall[]>
+  agentTaskNotifications: Record<string, AgentTaskNotification>
   /** When true, the last tool is still executing — show expanded */
   isStreaming?: boolean
 }
@@ -50,7 +51,13 @@ function groupHasErrors(toolCalls: ToolCall[], resultMap: Map<string, ToolResult
   })
 }
 
-export function ToolCallGroup({ toolCalls, resultMap, childToolCallsByParent, isStreaming }: Props) {
+export function ToolCallGroup({
+  toolCalls,
+  resultMap,
+  childToolCallsByParent,
+  agentTaskNotifications,
+  isStreaming,
+}: Props) {
   const allAgents = toolCalls.every((toolCall) => toolCall.toolName === 'Agent')
 
   if (allAgents) {
@@ -59,6 +66,7 @@ export function ToolCallGroup({ toolCalls, resultMap, childToolCallsByParent, is
         toolCalls={toolCalls}
         resultMap={resultMap}
         childToolCallsByParent={childToolCallsByParent}
+        agentTaskNotifications={agentTaskNotifications}
         isStreaming={isStreaming}
       />
     )
@@ -81,16 +89,35 @@ export function ToolCallGroup({ toolCalls, resultMap, childToolCallsByParent, is
       toolCalls={toolCalls}
       resultMap={resultMap}
       childToolCallsByParent={childToolCallsByParent}
+      agentTaskNotifications={agentTaskNotifications}
       isStreaming={isStreaming}
     />
   )
 }
 
-function AgentToolGroup({ toolCalls, resultMap, childToolCallsByParent, isStreaming }: Props) {
+function AgentToolGroup({
+  toolCalls,
+  resultMap,
+  childToolCallsByParent,
+  agentTaskNotifications,
+  isStreaming,
+}: Props) {
   const [expanded, setExpanded] = useState(true)
   const t = useTranslation()
-  const errorPresent = groupHasErrors(toolCalls, resultMap)
-  const allComplete = toolCalls.every((tc) => resultMap.has(tc.toolUseId))
+  const statuses = toolCalls.map((toolCall) =>
+    getAgentStatus({
+      hasResult: resultMap.has(toolCall.toolUseId),
+      isError: !!resultMap.get(toolCall.toolUseId)?.isError,
+      isLaunchResult: isAgentLaunchResult(resultMap.get(toolCall.toolUseId)?.content),
+      isStreaming: !!isStreaming && !resultMap.has(toolCall.toolUseId),
+      childCount: (childToolCallsByParent.get(toolCall.toolUseId) ?? []).length,
+      taskStatus: agentTaskNotifications[toolCall.toolUseId]?.status,
+    }),
+  )
+  const isAnyRunning = statuses.some((status) => status === 'running' || status === 'starting')
+  const errorPresent = statuses.some((status) => status === 'failed')
+  const allComplete = statuses.every((status) => status === 'done')
+  const anyStopped = statuses.some((status) => status === 'stopped')
 
   useEffect(() => {
     if (isStreaming) {
@@ -111,19 +138,22 @@ function AgentToolGroup({ toolCalls, resultMap, childToolCallsByParent, isStream
         <span className="flex-1 truncate text-[12px] text-[var(--color-text-secondary)]">
           {toolCalls.length === 1 ? t('toolGroup.agentOne') : t('toolGroup.agentMany', { count: toolCalls.length })}
         </span>
-        {isStreaming && (
+        {isAnyRunning && (
           <span className="rounded-full bg-[var(--color-warning)]/12 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-warning)]">
             {t('agentStatus.running')}
           </span>
         )}
-        {!isStreaming && errorPresent && (
+        {!isAnyRunning && errorPresent && (
           <span className="material-symbols-outlined text-[14px] text-[var(--color-error)]">error</span>
         )}
-        {!isStreaming && !errorPresent && allComplete && (
+        {!isAnyRunning && !errorPresent && allComplete && (
           <span className="material-symbols-outlined text-[14px] text-[var(--color-success)]">check_circle</span>
         )}
-        {!isStreaming && !errorPresent && !allComplete && (
+        {!isAnyRunning && !errorPresent && !allComplete && !anyStopped && (
           <span className="material-symbols-outlined text-[14px] text-[var(--color-outline)]">pending</span>
+        )}
+        {!isAnyRunning && !errorPresent && !allComplete && anyStopped && (
+          <span className="material-symbols-outlined text-[14px] text-[var(--color-outline)]">stop_circle</span>
         )}
       </button>
 
@@ -141,6 +171,7 @@ function AgentToolGroup({ toolCalls, resultMap, childToolCallsByParent, isStream
                   toolCall={toolCall}
                   resultMap={resultMap}
                   childToolCallsByParent={childToolCallsByParent}
+                  agentTaskNotification={agentTaskNotifications[toolCall.toolUseId]}
                   isStreaming={isStreaming && !resultMap.has(toolCall.toolUseId)}
                 />
               </div>
@@ -217,11 +248,13 @@ function AgentCallCard({
   toolCall,
   resultMap,
   childToolCallsByParent,
+  agentTaskNotification,
   isStreaming = false,
 }: {
   toolCall: ToolCall
   resultMap: Map<string, ToolResult>
   childToolCallsByParent: Map<string, ToolCall[]>
+  agentTaskNotification?: AgentTaskNotification
   isStreaming?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -232,18 +265,31 @@ function AgentCallCard({
     : {}
   const result = resultMap.get(toolCall.toolUseId)
   const childToolCalls = childToolCallsByParent.get(toolCall.toolUseId) ?? []
+  const isLaunchResult = isAgentLaunchResult(result?.content)
   const recentToolCalls = childToolCalls.slice(-2)
   const status = getAgentStatus({
     hasResult: !!result,
     isError: !!result?.isError,
+    isLaunchResult,
     isStreaming,
     childCount: childToolCalls.length,
+    taskStatus: agentTaskNotification?.status,
   })
   const statusClassName = getAgentStatusClassName(status)
   const statusLabel = getAgentStatusLabel(status, t)
-  const errorText = result?.isError ? getAgentErrorSummary(result.content) : ''
-  const fullOutputText = result && !result.isError ? extractTextContent(result.content).trim() : ''
-  const outputSummary = fullOutputText ? getAgentOutputSummary(fullOutputText) : ''
+  const taskSummary = agentTaskNotification?.summary?.trim() || ''
+  const errorText =
+    status === 'failed'
+      ? taskSummary || (result?.isError ? getAgentErrorSummary(result.content) : '')
+      : result?.isError
+        ? getAgentErrorSummary(result.content)
+        : ''
+  const fullOutputText =
+    result && !result.isError && !isLaunchResult
+      ? extractTextContent(result.content).trim()
+      : ''
+  const previewText = fullOutputText || (status === 'done' || status === 'stopped' ? taskSummary : '')
+  const outputSummary = previewText ? getAgentOutputSummary(previewText) : ''
   const description = typeof input.description === 'string' ? input.description : ''
 
   return (
@@ -353,7 +399,7 @@ function AgentCallCard({
         width={900}
       >
         <div className="max-h-[70vh] overflow-y-auto">
-          <MarkdownRenderer content={fullOutputText || errorText} />
+          <MarkdownRenderer content={previewText || errorText} />
         </div>
       </Modal>
     </div>
@@ -401,22 +447,30 @@ function ToolCallTree({
   )
 }
 
-type AgentStatus = 'starting' | 'running' | 'done' | 'failed'
+type AgentStatus = 'starting' | 'running' | 'done' | 'failed' | 'stopped'
+type AgentTaskStatus = AgentTaskNotification['status']
 
 function getAgentStatus({
   hasResult,
   isError,
+  isLaunchResult,
   isStreaming,
   childCount,
+  taskStatus,
 }: {
   hasResult: boolean
   isError: boolean
+  isLaunchResult: boolean
   isStreaming: boolean
   childCount: number
+  taskStatus?: AgentTaskStatus
 }): AgentStatus {
-  if (hasResult && isError) return 'failed'
-  if (hasResult) return 'done'
-  if (isStreaming || childCount > 0) return 'running'
+  if (taskStatus === 'failed') return 'failed'
+  if (taskStatus === 'stopped') return 'stopped'
+  if (taskStatus === 'completed') return 'done'
+  if (hasResult && isError && !isLaunchResult) return 'failed'
+  if (hasResult && !isLaunchResult) return 'done'
+  if (isStreaming || childCount > 0 || isLaunchResult) return 'running'
   return 'starting'
 }
 
@@ -427,6 +481,8 @@ function getAgentStatusLabel(
   switch (status) {
     case 'failed':
       return t('agentStatus.failed')
+    case 'stopped':
+      return t('agentStatus.stopped')
     case 'done':
       return t('agentStatus.done')
     case 'running':
@@ -441,6 +497,8 @@ function getAgentStatusClassName(status: AgentStatus): string {
   switch (status) {
     case 'failed':
       return 'bg-[var(--color-error)]/10 text-[var(--color-error)]'
+    case 'stopped':
+      return 'bg-[var(--color-surface-container-high)] text-[var(--color-text-secondary)]'
     case 'done':
       return 'bg-[var(--color-success)]/10 text-[var(--color-success)]'
     case 'running':
@@ -490,6 +548,20 @@ function getAgentOutputSummary(content: string): string {
   const text = content.replace(/\s+\n/g, '\n').trim()
   if (!text) return ''
   return text.length > 220 ? `${text.slice(0, 220)}...` : text
+}
+
+function isAgentLaunchResult(content: unknown): boolean {
+  const text = extractTextContent(content).trim()
+  if (!text) return false
+
+  return (
+    text.startsWith('Async agent launched successfully.') ||
+    text.startsWith('Remote agent launched in CCR.') ||
+    (text.startsWith('Spawned successfully.') &&
+      text.includes('The agent is now running and will receive instructions via mailbox.')) ||
+    text.includes('The agent is working in the background. You will be notified automatically when it completes.') ||
+    text.includes('The agent is running remotely. You will be notified automatically when it completes.')
+  )
 }
 
 function extractTextContent(content: unknown): string {
