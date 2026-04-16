@@ -61,6 +61,30 @@ if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
   (cd "${DESKTOP_DIR}" && bun install)
 fi
 
+# ── 清理 + 显式预热前端 / sidecar ────────────────────────────
+# 之前遇到过"改了 src/ 代码,build 的 .app 里 sidecar 还是旧的"的诡异
+# case —— 根因是 Bun.build / Tauri bundler 某一层的缓存把旧 sidecar
+# binary 复用进了新 .app(.app 被删干净了也救不回来,因为 binary 源在
+# desktop/src-tauri/binaries/)。
+#
+# 这里做三件事强制 fresh build:
+#   1) 硬删 sidecar 源 binary + Tauri bundle 目录 + 前端 dist
+#   2) 显式跑 bun run build + bun run build:sidecars
+#   3) tauri build 用 --config 覆盖 beforeBuildCommand 为 true(no-op),
+#      避免 sidecar 被重复编译浪费 ~10s
+# 任一步失败,整个脚本立即退出(set -e)。
+echo "[build-macos-arm64] Cleaning stale sidecar binaries and bundle output..."
+rm -rf "${DESKTOP_DIR}/src-tauri/binaries/claude-sidecar-"*
+rm -rf "${DESKTOP_DIR}/src-tauri/target/${TARGET_TRIPLE}/release/bundle"
+rm -rf "${DESKTOP_DIR}/src-tauri/target/release/bundle"
+rm -rf "${DESKTOP_DIR}/dist"
+
+echo "[build-macos-arm64] Rebuilding frontend (tsc + vite)..."
+(cd "${DESKTOP_DIR}" && bun run build)
+
+echo "[build-macos-arm64] Rebuilding sidecar for ${TARGET_TRIPLE}..."
+(cd "${DESKTOP_DIR}" && TAURI_ENV_TARGET_TRIPLE="${TARGET_TRIPLE}" bun run build:sidecars)
+
 TAURI_ARGS=(
   bunx
   tauri
@@ -70,6 +94,8 @@ TAURI_ARGS=(
   --bundles
   app,dmg
   --ci
+  --config
+  '{"build":{"beforeBuildCommand":"true"}}'
 )
 
 if [[ "${SIGN_BUILD:-0}" != "1" ]]; then
