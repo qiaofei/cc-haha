@@ -390,6 +390,7 @@ export const en = {
   // ─── Tasks ──────────────────────────────────────
   'tasks.title': 'Tasks',
   'tasks.completed': 'Tasks completed',
+  'tasks.dismissCompleted': 'Hide completed tasks',
   'tasks.newTask': '+ New task',
   'tasks.emptyTitle': 'No scheduled tasks yet.',
   'tasks.emptyDesc': 'Create a recurring task to automate your engineering workflows.',

@@ -21,7 +21,13 @@ const statusConfig = {
 } as const
 
 export function SessionTaskBar() {
-  const { tasks, expanded, toggleExpanded, completedAndDismissed } = useCLITaskStore()
+  const {
+    tasks,
+    expanded,
+    toggleExpanded,
+    completedAndDismissed,
+    markCompletedAndDismissed,
+  } = useCLITaskStore()
   const t = useTranslation()
 
   if (tasks.length === 0) return null
@@ -38,46 +44,60 @@ export function SessionTaskBar() {
     <div className="shrink-0 px-8">
       <div className="mx-auto max-w-[860px] rounded-[var(--radius-lg)] border border-[var(--color-outline-variant)]/40 bg-[var(--color-surface-container-lowest)] overflow-hidden mb-2">
         {/* Header — always visible, clickable to toggle */}
-        <button
-          onClick={toggleExpanded}
-          className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-container-low)] transition-colors bg-[var(--color-surface-container)]"
-        >
-          <div className="flex items-center justify-center w-6 h-6 rounded-[var(--radius-md)] bg-[var(--color-secondary)]/10">
-            <span
-              className="material-symbols-outlined text-[14px] text-[var(--color-secondary)]"
-            >
-              checklist
-            </span>
-          </div>
-
-          <span className="text-xs font-semibold text-[var(--color-text-primary)]">
-            {t('tasks.title')}
-          </span>
-
-          {/* Progress bar */}
-          <div className="flex-1 h-1.5 rounded-full bg-[var(--color-border)] overflow-hidden max-w-[200px]">
-            <div
-              className="h-full rounded-full transition-all duration-300"
-              style={{
-                width: `${progressPercent}%`,
-                backgroundColor: completedCount === totalCount
-                  ? 'var(--color-success)'
-                  : 'var(--color-brand)',
-              }}
-            />
-          </div>
-
-          <span className="text-[10px] text-[var(--color-text-tertiary)] tabular-nums">
-            {completedCount}/{totalCount}
-          </span>
-
-          <span
-            className="material-symbols-outlined text-[14px] text-[var(--color-text-tertiary)] transition-transform duration-200"
-            style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
+        <div className="flex items-center gap-2 bg-[var(--color-surface-container)] px-2 py-1.5">
+          <button
+            type="button"
+            onClick={toggleExpanded}
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-md)] px-2 py-1 hover:bg-[var(--color-surface-container-low)] transition-colors"
           >
-            expand_less
-          </span>
-        </button>
+            <div className="flex items-center justify-center w-6 h-6 rounded-[var(--radius-md)] bg-[var(--color-secondary)]/10">
+              <span
+                className="material-symbols-outlined text-[14px] text-[var(--color-secondary)]"
+              >
+                checklist
+              </span>
+            </div>
+
+            <span className="text-xs font-semibold text-[var(--color-text-primary)]">
+              {t('tasks.title')}
+            </span>
+
+            {/* Progress bar */}
+            <div className="flex-1 h-1.5 rounded-full bg-[var(--color-border)] overflow-hidden max-w-[200px]">
+              <div
+                className="h-full rounded-full transition-all duration-300"
+                style={{
+                  width: `${progressPercent}%`,
+                  backgroundColor: completedCount === totalCount
+                    ? 'var(--color-success)'
+                    : 'var(--color-brand)',
+                }}
+              />
+            </div>
+
+            <span className="text-[10px] text-[var(--color-text-tertiary)] tabular-nums">
+              {completedCount}/{totalCount}
+            </span>
+
+            <span
+              className="material-symbols-outlined text-[14px] text-[var(--color-text-tertiary)] transition-transform duration-200"
+              style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
+            >
+              expand_less
+            </span>
+          </button>
+
+          {allCompleted && (
+            <button
+              type="button"
+              aria-label={t('tasks.dismissCompleted')}
+              onClick={markCompletedAndDismissed}
+              className="flex shrink-0 items-center justify-center rounded-[var(--radius-md)] p-1.5 text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-container-low)] hover:text-[var(--color-text-primary)] transition-colors"
+            >
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          )}
+        </div>
 
         {/* Expanded task list */}
         {expanded && (

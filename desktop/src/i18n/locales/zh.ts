@@ -392,6 +392,7 @@ export const zh: Record<TranslationKey, string> = {
   // ─── Tasks ──────────────────────────────────────
   'tasks.title': '任务',
   'tasks.completed': '已完成的任务',
+  'tasks.dismissCompleted': '隐藏已完成任务',
   'tasks.newTask': '+ 新建任务',
   'tasks.emptyTitle': '暂无定时任务。',
   'tasks.emptyDesc': '创建定时任务来自动化你的工程工作流。',
