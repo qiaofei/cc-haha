@@ -62,3 +62,11 @@ sidebar-snapshot.md
 docs/.vitepress/dist
 docs/.vitepress/cache
 runtime/__pycache__
+
+# Local runtime files
+.litellm.pid
+.server.pid
+.litellm.pid
+.server.pid
+.vscode/
+litellm_config.yaml
