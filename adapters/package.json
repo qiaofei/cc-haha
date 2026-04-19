@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "telegram": "bun run telegram/index.ts",
-    "feishu": "bun run feishu/index.ts",
+    "telegram": "bun --env-file=../.env run telegram/index.ts",
+    "feishu": "bun --env-file=../.env run feishu/index.ts",
     "test": "bun test",
     "test:common": "bun test common/",
     "test:telegram": "bun test telegram/",
