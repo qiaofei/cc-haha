@@ -211,6 +211,29 @@ describe('WebSocket Chat Integration', () => {
     }
   }
 
+  async function withMockStreamDelay<T>(
+    delayMs: number | undefined,
+    callback: () => Promise<T>,
+  ): Promise<T> {
+    const previousDelay = process.env.MOCK_SDK_STREAM_DELAY_MS
+
+    if (delayMs && delayMs > 0) {
+      process.env.MOCK_SDK_STREAM_DELAY_MS = String(delayMs)
+    } else {
+      delete process.env.MOCK_SDK_STREAM_DELAY_MS
+    }
+
+    try {
+      return await callback()
+    } finally {
+      if (previousDelay === undefined) {
+        delete process.env.MOCK_SDK_STREAM_DELAY_MS
+      } else {
+        process.env.MOCK_SDK_STREAM_DELAY_MS = previousDelay
+      }
+    }
+  }
+
   async function runTurn(sessionId: string, content: string): Promise<any[]> {
     const messages: any[] = []
     const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
@@ -479,5 +502,73 @@ describe('WebSocket Chat Integration', () => {
     const secondTurn = await runTurn(sessionId, 'reply with second')
     expect(secondTurn.some((m) => m.type === 'message_complete')).toBe(true)
     expect(secondTurn.some((m) => m.type === 'error')).toBe(false)
+  })
+
+  it('should resume streaming to a reconnected client during an active turn', async () => {
+    await withMockStreamDelay(150, async () => {
+      const sessionId = `chat-reconnect-${crypto.randomUUID()}`
+      const firstMessages: any[] = []
+      const secondMessages: any[] = []
+
+      await new Promise<void>((resolve, reject) => {
+        let reconnected = false
+        let ws2: WebSocket | null = null
+        const timeout = setTimeout(() => {
+          ws2?.close()
+          reject(new Error(`Timed out waiting for reconnect completion for session ${sessionId}`))
+        }, 10_000)
+
+        const cleanup = () => {
+          clearTimeout(timeout)
+          ws2?.close()
+          resolve()
+        }
+
+        const handleFailure = (message: string) => {
+          clearTimeout(timeout)
+          ws2?.close()
+          reject(new Error(message))
+        }
+
+        const ws1 = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+        ws1.onmessage = (event) => {
+          const msg = JSON.parse(event.data as string)
+          firstMessages.push(msg)
+
+          if (msg.type === 'connected') {
+            ws1.send(JSON.stringify({ type: 'user_message', content: 'resume after reconnect' }))
+            return
+          }
+
+          if (msg.type === 'thinking' && !reconnected) {
+            reconnected = true
+            ws1.close()
+
+            setTimeout(() => {
+              ws2 = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+              ws2.onmessage = (reconnectEvent) => {
+                const reconnectMsg = JSON.parse(reconnectEvent.data as string)
+                secondMessages.push(reconnectMsg)
+                if (reconnectMsg.type === 'error') {
+                  handleFailure(reconnectMsg.message)
+                  return
+                }
+                if (reconnectMsg.type === 'message_complete') {
+                  cleanup()
+                }
+              }
+              ws2.onerror = () => handleFailure(`WebSocket reconnect error for session ${sessionId}`)
+            }, 50)
+          }
+        }
+
+        ws1.onerror = () => handleFailure(`Initial WebSocket error for session ${sessionId}`)
+      })
+
+      expect(firstMessages.some((msg) => msg.type === 'thinking')).toBe(true)
+      expect(secondMessages.some((msg) => msg.type === 'connected')).toBe(true)
+      expect(secondMessages.some((msg) => msg.type === 'content_delta')).toBe(true)
+      expect(secondMessages.some((msg) => msg.type === 'message_complete')).toBe(true)
+    })
   })
 })

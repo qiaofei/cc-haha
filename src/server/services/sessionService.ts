@@ -71,6 +71,13 @@ type RawEntry = {
   [key: string]: unknown
 }
 
+const USER_INTERRUPTION_TEXTS = new Set([
+  '[Request interrupted by user]',
+  '[Request interrupted by user for tool use]',
+])
+
+const NO_RESPONSE_REQUESTED_TEXT = 'No response requested.'
+
 // ============================================================================
 // Service
 // ============================================================================
@@ -202,6 +209,67 @@ export class SessionService {
       parentToolUseId,
       isSidechain: entry.isSidechain,
     }
+  }
+
+  private extractTextBlocks(content: unknown): string[] {
+    if (typeof content === 'string') return [content]
+    if (!Array.isArray(content)) return []
+
+    return content
+      .flatMap((block) => {
+        if (!block || typeof block !== 'object') return []
+        const record = block as Record<string, unknown>
+        return record.type === 'text' && typeof record.text === 'string'
+          ? [record.text]
+          : []
+      })
+      .map((text) => text.trim())
+      .filter(Boolean)
+  }
+
+  private isInternalCommandBreadcrumb(content: unknown): boolean {
+    if (typeof content !== 'string') return false
+
+    return (
+      content.includes('<command-name>') ||
+      content.includes('<command-message>') ||
+      content.includes('<command-args>') ||
+      content.includes('<local-command-caveat>')
+    )
+  }
+
+  private isSyntheticUserInterruption(content: unknown): boolean {
+    const textBlocks = this.extractTextBlocks(content)
+    return (
+      textBlocks.length > 0 &&
+      textBlocks.every((text) => USER_INTERRUPTION_TEXTS.has(text))
+    )
+  }
+
+  private isSyntheticNoResponseAssistant(content: unknown): boolean {
+    const textBlocks = this.extractTextBlocks(content)
+    return (
+      textBlocks.length > 0 &&
+      textBlocks.every((text) => text === NO_RESPONSE_REQUESTED_TEXT)
+    )
+  }
+
+  private shouldHideTranscriptEntry(entry: RawEntry): boolean {
+    const role = entry.message?.role
+    const content = entry.message?.content
+
+    if (role === 'user') {
+      return (
+        this.isInternalCommandBreadcrumb(content) ||
+        this.isSyntheticUserInterruption(content)
+      )
+    }
+
+    if (role === 'assistant') {
+      return this.isSyntheticNoResponseAssistant(content)
+    }
+
+    return false
   }
 
   private extractAgentToolUseId(entry: RawEntry): string | undefined {
@@ -753,6 +821,8 @@ export class SessionService {
 
       // Skip meta entries (CLI internal bookkeeping)
       if (entry.isMeta) continue
+
+      if (this.shouldHideTranscriptEntry(entry)) continue
 
       // Skip non-transcript entry types
       const entryType = entry.type

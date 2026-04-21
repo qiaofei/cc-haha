@@ -91,6 +91,7 @@ export const handleWebSocket = {
     }
 
     activeSessions.set(sessionId, ws)
+    rebindSessionOutput(sessionId, ws)
 
     const msg: ServerMessage = { type: 'connected', sessionId }
     ws.send(JSON.stringify(msg))
@@ -155,9 +156,7 @@ export const handleWebSocket = {
     console.log(`[WS] Client disconnected from session: ${sessionId} (${code}: ${reason})`)
     computerUseApprovalService.cancelSession(sessionId)
     activeSessions.delete(sessionId)
-    cleanupStreamState(sessionId)
-    sessionSlashCommands.delete(sessionId)
-    sessionTitleState.delete(sessionId)
+    conversationService.clearOutputCallbacks(sessionId)
 
     // Schedule delayed cleanup: if the client doesn't reconnect within 30 seconds,
     // stop the CLI subprocess to avoid leaking resources.
@@ -166,6 +165,7 @@ export const handleWebSocket = {
       if (!activeSessions.has(sessionId)) {
         console.log(`[WS] Session ${sessionId} not reconnected after 30s, stopping CLI subprocess`)
         conversationService.stopSession(sessionId)
+        cleanupSessionRuntimeState(sessionId)
       }
     }, 30_000)
     sessionCleanupTimers.set(sessionId, cleanupTimer)
@@ -252,26 +252,8 @@ async function handleUserMessage(
   // any pre-turn SDK chatter as fresh chat history.
   let userMessageSent = false
 
-  conversationService.clearOutputCallbacks(sessionId)
-  conversationService.onOutput(sessionId, (cliMsg) => {
-    // Before the current turn is sent, only surface startup errors.
-    if (!userMessageSent) {
-      if (cliMsg.type === 'result' && cliMsg.is_error) {
-        const serverMsgs = translateCliMessage(cliMsg, sessionId)
-        for (const msg of serverMsgs) {
-          sendMessage(ws, msg)
-        }
-      }
-      return
-    }
-    const serverMsgs = translateCliMessage(cliMsg, sessionId)
-    for (const msg of serverMsgs) {
-      sendMessage(ws, msg)
-    }
-    // Trigger title generation on message_complete
-    if (cliMsg.type === 'result') {
-      triggerTitleGeneration(ws, sessionId)
-    }
+  rebindSessionOutput(sessionId, ws, {
+    shouldForward: (cliMsg) => userMessageSent || (cliMsg.type === 'result' && cliMsg.is_error),
   })
 
   const sent = conversationService.sendMessage(
@@ -483,6 +465,12 @@ function getStreamState(sessionId: string): SessionStreamState {
 /** Clean up stream state when session disconnects */
 function cleanupStreamState(sessionId: string) {
   sessionStreamStates.delete(sessionId)
+}
+
+function cleanupSessionRuntimeState(sessionId: string) {
+  cleanupStreamState(sessionId)
+  sessionSlashCommands.delete(sessionId)
+  sessionTitleState.delete(sessionId)
 }
 
 function translateCliMessage(cliMsg: any, sessionId: string): ServerMessage[] {
@@ -829,6 +817,32 @@ function sendMessage(ws: ServerWebSocket<WebSocketData>, message: ServerMessage)
 
 function sendError(ws: ServerWebSocket<WebSocketData>, message: string, code: string) {
   sendMessage(ws, { type: 'error', message, code })
+}
+
+function rebindSessionOutput(
+  sessionId: string,
+  ws: ServerWebSocket<WebSocketData>,
+  options?: {
+    shouldForward?: (cliMsg: any) => boolean
+  },
+) {
+  if (!conversationService.hasSession(sessionId)) return
+
+  conversationService.clearOutputCallbacks(sessionId)
+  conversationService.onOutput(sessionId, (cliMsg) => {
+    if (options?.shouldForward && !options.shouldForward(cliMsg)) {
+      return
+    }
+
+    const serverMsgs = translateCliMessage(cliMsg, sessionId)
+    for (const msg of serverMsgs) {
+      sendMessage(ws, msg)
+    }
+
+    if (cliMsg.type === 'result') {
+      triggerTitleGeneration(ws, sessionId)
+    }
+  })
 }
 
 async function getRuntimeSettings(): Promise<{

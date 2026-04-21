@@ -263,6 +263,52 @@ describe('SessionService', () => {
     expect(messages).toHaveLength(2)
   })
 
+  it('should hide synthetic interruption, no-response, and command breadcrumb transcript entries', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-project', sessionId, [
+      makeSnapshotEntry(),
+      makeUserEntry('正常用户消息', crypto.randomUUID()),
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '[Request interrupted by user]' }],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'No response requested.' }],
+          model: '<synthetic>',
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:03.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>',
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:04.000Z',
+      },
+      makeAssistantEntry('正常助手消息', crypto.randomUUID()),
+    ])
+
+    const messages = await service.getSessionMessages(sessionId)
+
+    expect(messages).toHaveLength(2)
+    expect(messages[0]).toMatchObject({ type: 'user', content: '正常用户消息' })
+    expect(messages[1]).toMatchObject({
+      type: 'assistant',
+      content: [{ type: 'text', text: '正常助手消息' }],
+    })
+  })
+
   it('should reconstruct parent agent tool linkage from parentUuid chains', async () => {
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
     const userUuid = crypto.randomUUID()

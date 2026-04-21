@@ -9,6 +9,10 @@ function emit(ws: WebSocket, payload: Record<string, unknown>) {
   ws.send(JSON.stringify(payload) + '\n')
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 function extractUserText(message: any): string {
   const content = message?.message?.content
   if (!Array.isArray(content)) return ''
@@ -21,6 +25,7 @@ function extractUserText(message: any): string {
 const sdkUrl = getArg('--sdk-url')
 const sessionId = getArg('--session-id') || crypto.randomUUID()
 const initMode = process.env.MOCK_SDK_INIT_MODE || 'on_open'
+const streamDelayMs = Number(process.env.MOCK_SDK_STREAM_DELAY_MS || '0')
 let initSent = false
 
 if (!sdkUrl) {
@@ -52,70 +57,74 @@ ws.addEventListener('message', (event) => {
   const payload = typeof event.data === 'string' ? event.data : String(event.data)
   const lines = payload.split('\n').map(line => line.trim()).filter(Boolean)
 
-  for (const line of lines) {
-    const parsed = JSON.parse(line)
+  void (async () => {
+    for (const line of lines) {
+      const parsed = JSON.parse(line)
 
-    if (parsed.type === 'user') {
-      sendInit()
-      const text = extractUserText(parsed)
-      emit(ws, {
-        type: 'stream_event',
-        event: { type: 'message_start' },
-        session_id: sessionId,
-      })
-      emit(ws, {
-        type: 'stream_event',
-        event: {
-          type: 'content_block_start',
-          index: 0,
-          content_block: { type: 'text', text: '' },
-        },
-        session_id: sessionId,
-      })
-      emit(ws, {
-        type: 'stream_event',
-        event: {
-          type: 'content_block_delta',
-          index: 0,
-          delta: { type: 'thinking_delta', thinking: 'Mock thinking...' },
-        },
-        session_id: sessionId,
-      })
-      emit(ws, {
-        type: 'stream_event',
-        event: {
-          type: 'content_block_delta',
-          index: 0,
-          delta: { type: 'text_delta', text: `Echo: ${text}` },
-        },
-        session_id: sessionId,
-      })
-      emit(ws, {
-        type: 'stream_event',
-        event: { type: 'content_block_stop', index: 0 },
-        session_id: sessionId,
-      })
-      emit(ws, {
-        type: 'result',
-        subtype: 'success',
-        is_error: false,
-        result: `Echo: ${text}`,
-        usage: { input_tokens: 3, output_tokens: 2 },
-        session_id: sessionId,
-      })
-    }
+      if (parsed.type === 'user') {
+        sendInit()
+        const text = extractUserText(parsed)
+        emit(ws, {
+          type: 'stream_event',
+          event: { type: 'message_start' },
+          session_id: sessionId,
+        })
+        emit(ws, {
+          type: 'stream_event',
+          event: {
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'text', text: '' },
+          },
+          session_id: sessionId,
+        })
+        emit(ws, {
+          type: 'stream_event',
+          event: {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'thinking_delta', thinking: 'Mock thinking...' },
+          },
+          session_id: sessionId,
+        })
+        if (streamDelayMs > 0) await delay(streamDelayMs)
+        emit(ws, {
+          type: 'stream_event',
+          event: {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: `Echo: ${text}` },
+          },
+          session_id: sessionId,
+        })
+        if (streamDelayMs > 0) await delay(streamDelayMs)
+        emit(ws, {
+          type: 'stream_event',
+          event: { type: 'content_block_stop', index: 0 },
+          session_id: sessionId,
+        })
+        emit(ws, {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          result: `Echo: ${text}`,
+          usage: { input_tokens: 3, output_tokens: 2 },
+          session_id: sessionId,
+        })
+      }
 
-    if (parsed.type === 'control_request' && parsed.request?.subtype === 'interrupt') {
-      emit(ws, {
-        type: 'result',
-        subtype: 'success',
-        is_error: false,
-        result: 'Interrupted',
-        usage: { input_tokens: 0, output_tokens: 0 },
-        session_id: sessionId,
-      })
+      if (parsed.type === 'control_request' && parsed.request?.subtype === 'interrupt') {
+        emit(ws, {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          result: 'Interrupted',
+          usage: { input_tokens: 0, output_tokens: 0 },
+          session_id: sessionId,
+        })
+      }
     }
-  }
+  })()
 })
 
 ws.addEventListener('close', () => {
