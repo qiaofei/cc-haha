@@ -10,7 +10,7 @@
  *   bun run scripts/release.ts patch --dry  # preview without changes
  */
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 const root = path.resolve(import.meta.dir, '..')
@@ -41,6 +41,10 @@ function getCurrentVersion(): string {
     readFileSync(path.join(root, 'desktop/src-tauri/tauri.conf.json'), 'utf-8'),
   )
   return tauriConf.version
+}
+
+function getReleaseNotesPath(version: string): string {
+  return path.join(root, 'release-notes', `v${version}.md`)
 }
 
 function bumpVersion(current: string, bump: string): string {
@@ -88,9 +92,11 @@ if (!bumpArg) {
 
 const current = getCurrentVersion()
 const next = bumpVersion(current, bumpArg)
+const releaseNotesPath = getReleaseNotesPath(next)
 
 console.log(`\n  Version: ${current} → ${next}`)
 console.log(`  Tag:     v${next}`)
+console.log(`  Notes:   ${path.relative(root, releaseNotesPath)}`)
 console.log(`  Dry run: ${dryRun}\n`)
 
 if (dryRun) {
@@ -98,7 +104,14 @@ if (dryRun) {
   for (const file of VERSION_FILES) {
     console.log(`  - ${path.relative(root, file.path)}`)
   }
+  console.log(`  - ${path.relative(root, releaseNotesPath)} ${existsSync(releaseNotesPath) ? '(present)' : '(missing)'}`)
   process.exit(0)
+}
+
+if (!existsSync(releaseNotesPath)) {
+  console.error(`Missing release notes file: ${path.relative(root, releaseNotesPath)}`)
+  console.error(`Create it before releasing so GitHub Release can use it automatically.`)
+  process.exit(1)
 }
 
 // Update version in all files
@@ -122,6 +135,7 @@ await run([
   'desktop/src-tauri/tauri.conf.json',
   'desktop/src-tauri/Cargo.toml',
   'desktop/src-tauri/Cargo.lock',
+  path.relative(root, releaseNotesPath),
 ])
 await run(['git', 'commit', '-m', `release: v${next}`])
 await run(['git', 'tag', '-a', `v${next}`, '-m', `Release v${next}`])

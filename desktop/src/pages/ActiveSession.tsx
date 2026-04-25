@@ -7,6 +7,7 @@ import { useTeamStore } from '../stores/teamStore'
 import { useTranslation } from '../i18n'
 import { MessageList } from '../components/chat/MessageList'
 import { ChatInput } from '../components/chat/ChatInput'
+import { ComputerUsePermissionModal } from '../components/chat/ComputerUsePermissionModal'
 import { TeamStatusBar } from '../components/teams/TeamStatusBar'
 import { SessionTaskBar } from '../components/chat/SessionTaskBar'
 
@@ -17,6 +18,7 @@ export function ActiveSession() {
   const sessions = useSessionStore((s) => s.sessions)
   const connectToSession = useChatStore((s) => s.connectToSession)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
+  const pendingComputerUsePermission = sessionState?.pendingComputerUsePermission ?? null
   const fetchSessionTasks = useCLITaskStore((s) => s.fetchSessionTasks)
   const trackedTaskSessionId = useCLITaskStore((s) => s.sessionId)
   const hasIncompleteTasks = useCLITaskStore((s) => s.tasks.some((task) => task.status !== 'completed'))
@@ -139,11 +141,11 @@ export function ActiveSession() {
               </>
             ) : (
               <>
-                <img src="/app-icon.jpg" alt="Claude Code Haha" className="mb-6 h-24 w-24 rounded-[22px] shadow-[0_2px_12px_rgba(0,0,0,0.06)]" />
-                <h1 className="mb-2 text-3xl font-extrabold tracking-tight text-[var(--color-text-primary)]" style={{ fontFamily: "'Manrope', sans-serif" }}>
+                <img src="/app-icon.png" alt="Claude Code Haha" className="mb-6 h-24 w-24" />
+                <h1 className="mb-2 text-3xl font-extrabold tracking-tight text-[var(--color-text-primary)]" style={{ fontFamily: 'var(--font-headline)' }}>
                   {t('empty.title')}
                 </h1>
-                <p className="mx-auto max-w-xs text-[var(--color-text-secondary)]" style={{ fontFamily: "'Inter', sans-serif" }}>
+                <p className="mx-auto max-w-xs text-[var(--color-text-secondary)]" style={{ fontFamily: 'var(--font-body)' }}>
                   {t('empty.subtitle')}
                 </p>
               </>
@@ -204,7 +206,14 @@ export function ActiveSession() {
 
       <TeamStatusBar />
 
-      <ChatInput />
+      <ChatInput variant={isEmpty && !isMemberSession ? 'hero' : 'default'} />
+
+      {!isMemberSession && activeTabId ? (
+        <ComputerUsePermissionModal
+          sessionId={activeTabId}
+          request={pendingComputerUsePermission?.request ?? null}
+        />
+      ) : null}
     </div>
   )
 }

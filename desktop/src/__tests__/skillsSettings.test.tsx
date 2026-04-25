@@ -5,6 +5,9 @@ import '@testing-library/jest-dom'
 import { Settings } from '../pages/Settings'
 import { useSkillStore } from '../stores/skillStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useSessionStore } from '../stores/sessionStore'
+import { useTabStore, SETTINGS_TAB_ID } from '../stores/tabStore'
+import { useUIStore } from '../stores/uiStore'
 
 vi.mock('../api/agents', () => ({
   agentsApi: {
@@ -16,8 +19,11 @@ vi.mock('../stores/providerStore', () => ({
   useProviderStore: () => ({
     providers: [],
     activeId: null,
+    presets: [],
     isLoading: false,
+    isPresetsLoading: false,
     fetchProviders: vi.fn(),
+    fetchPresets: vi.fn(),
     deleteProvider: vi.fn(),
     activateProvider: vi.fn(),
     activateOfficial: vi.fn(),
@@ -60,9 +66,31 @@ describe('Settings > Skills tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useSettingsStore.setState({ locale: 'en' })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          title: 'Active session',
+          createdAt: '2026-04-20T00:00:00.000Z',
+          modifiedAt: '2026-04-20T00:00:00.000Z',
+          messageCount: 1,
+          projectPath: '/workspace/project',
+          workDir: '/workspace/project',
+          workDirExists: true,
+        },
+      ],
+      activeSessionId: 'session-1',
+      isLoading: false,
+      error: null,
+      selectedProjects: [],
+      availableProjects: ['/workspace/project'],
+    })
+    useTabStore.setState({ tabs: [], activeTabId: null })
+    useUIStore.setState({ pendingSettingsTab: null })
     useSkillStore.setState({
       skills: [],
       selectedSkill: null,
+      selectedSkillReturnTab: 'skills',
       isLoading: false,
       isDetailLoading: false,
       error: null,
@@ -93,6 +121,16 @@ describe('Settings > Skills tab', () => {
           contentLength: 200,
           hasDirectory: true,
         },
+        {
+          name: 'telegram:access',
+          displayName: 'Telegram Access',
+          description: 'Plugin-provided access workflow',
+          source: 'plugin',
+          pluginName: 'telegram',
+          userInvocable: true,
+          contentLength: 280,
+          hasDirectory: true,
+        },
       ],
     })
 
@@ -104,6 +142,31 @@ describe('Settings > Skills tab', () => {
     expect(screen.getByText('Total skills')).toBeInTheDocument()
     expect(screen.getByText('Alpha Skill')).toBeInTheDocument()
     expect(screen.getByText('Second skill description')).toBeInTheDocument()
+    expect(screen.getAllByText('Plugin').length).toBeGreaterThan(0)
+    expect(screen.getByText('Telegram Access')).toBeInTheDocument()
+  })
+
+  it('uses the active session workDir even when settings tab is focused', () => {
+    const fetchSkills = vi.fn()
+    useSkillStore.setState({
+      skills: [],
+      selectedSkill: null,
+      isLoading: false,
+      isDetailLoading: false,
+      error: null,
+      fetchSkills,
+      fetchSkillDetail: MOCK_FETCH_SKILL_DETAIL,
+      clearSelection: MOCK_CLEAR_SELECTION,
+    })
+    useTabStore.setState({
+      activeTabId: SETTINGS_TAB_ID,
+      tabs: [{ sessionId: SETTINGS_TAB_ID, title: 'Settings', type: 'settings', status: 'idle' }],
+    })
+
+    render(<Settings />)
+    switchToSkillsTab()
+
+    expect(fetchSkills).toHaveBeenCalledWith('/workspace/project')
   })
 
   it('opens skill detail with metadata cards and parsed markdown body', () => {
@@ -145,6 +208,7 @@ describe('Settings > Skills tab', () => {
         ],
         skillRoot: '/tmp/alpha',
       },
+      selectedSkillReturnTab: 'skills',
     })
 
     render(<Settings />)
@@ -156,5 +220,40 @@ describe('Settings > Skills tab', () => {
     expect(screen.getByText('Read, Edit')).toBeInTheDocument()
     expect(screen.getByText('Hello')).toBeInTheDocument()
     expect(screen.queryByText(/^---$/)).not.toBeInTheDocument()
+  })
+
+  it('returns to plugins tab when skill detail was opened from plugins', () => {
+    useSkillStore.setState({
+      selectedSkill: {
+        meta: {
+          name: 'telegram:access',
+          displayName: 'Access',
+          description: 'Plugin skill',
+          source: 'plugin',
+          userInvocable: true,
+          contentLength: 200,
+          hasDirectory: true,
+        },
+        tree: [{ name: 'SKILL.md', path: 'SKILL.md', type: 'file' }],
+        files: [
+          {
+            path: 'SKILL.md',
+            content: '# Access',
+            body: '# Access',
+            language: 'markdown',
+            isEntry: true,
+          },
+        ],
+        skillRoot: '/tmp/telegram-access',
+      },
+      selectedSkillReturnTab: 'plugins',
+    })
+
+    render(<Settings />)
+    switchToSkillsTab()
+
+    fireEvent.click(screen.getByText('Back to list'))
+
+    expect(screen.getByText('Installed Plugins')).toBeInTheDocument()
   })
 })

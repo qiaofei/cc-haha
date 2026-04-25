@@ -3,6 +3,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTranslation } from '../../i18n'
 import { ProjectFilter } from './ProjectFilter'
+import { ConfirmDialog } from '../shared/ConfirmDialog'
 import type { SessionListItem } from '../../types/session'
 import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
@@ -22,9 +23,14 @@ export function Sidebar() {
   const deleteSession = useSessionStore((s) => s.deleteSession)
   const renameSession = useSessionStore((s) => s.renameSession)
   const addToast = useUIStore((s) => s.addToast)
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen)
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const activeTabId = useTabStore((s) => s.activeTabId)
+  const closeTab = useTabStore((s) => s.closeTab)
+  const disconnectSession = useChatStore((s) => s.disconnectSession)
   const [searchQuery, setSearchQuery] = useState('')
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
@@ -32,7 +38,11 @@ export function Sidebar() {
     fetchSessions()
   }, [fetchSessions])
 
-  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu || sidebarOpen) return
+    setContextMenu(null)
+  }, [contextMenu, sidebarOpen])
+
   useEffect(() => {
     if (!contextMenu) return
     const close = () => setContextMenu(null)
@@ -40,7 +50,6 @@ export function Sidebar() {
     return () => document.removeEventListener('click', close)
   }, [contextMenu])
 
-  // Filter by selected projects, then by search query
   const filteredSessions = useMemo(() => {
     let result = sessions
     if (selectedProjects.length > 0) {
@@ -53,7 +62,6 @@ export function Sidebar() {
     return result
   }, [sessions, selectedProjects, searchQuery])
 
-  // Group by time
   const timeGroups = useMemo(() => groupByTime(filteredSessions), [filteredSessions])
 
   const handleContextMenu = useCallback((e: React.MouseEvent, id: string) => {
@@ -61,10 +69,18 @@ export function Sidebar() {
     setContextMenu({ id, x: e.clientX, y: e.clientY })
   }, [])
 
-  const handleDelete = useCallback(async (id: string) => {
+  const handleDelete = useCallback((id: string) => {
     setContextMenu(null)
-    await deleteSession(id)
-  }, [deleteSession])
+    setPendingDeleteSessionId(id)
+  }, [])
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDeleteSessionId) return
+    await deleteSession(pendingDeleteSessionId)
+    disconnectSession(pendingDeleteSessionId)
+    closeTab(pendingDeleteSessionId)
+    setPendingDeleteSessionId(null)
+  }, [closeTab, deleteSession, disconnectSession, pendingDeleteSessionId])
 
   const handleStartRename = useCallback((id: string, currentTitle: string) => {
     setContextMenu(null)
@@ -99,7 +115,7 @@ export function Sidebar() {
 
   const t = useTranslation()
 
-  const TIME_GROUP_LABELS: Record<TimeGroup, string> = {
+  const timeGroupLabels: Record<TimeGroup, string> = {
     today: t('sidebar.timeGroup.today'),
     yesterday: t('sidebar.timeGroup.yesterday'),
     last7days: t('sidebar.timeGroup.last7days'),
@@ -108,32 +124,56 @@ export function Sidebar() {
   }
 
   return (
-    <aside onMouseDown={handleSidebarDrag} className="w-[var(--sidebar-width)] h-full flex flex-col bg-[var(--color-surface-sidebar)] border-r border-[var(--color-border)] select-none">
-      {/* Brand logo — extra top padding in desktop to clear macOS traffic lights (not needed on Windows) */}
-      <div className={`px-3 pb-1.5 flex items-center justify-between ${isTauri && !isWindows ? 'pt-[44px]' : 'pt-3'}`}>
-        <div className="flex items-center gap-2.5">
-          <img src="/app-icon.jpg" alt="" className="h-8 w-8 rounded-lg flex-shrink-0" />
-          <span className="text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]" style={{ fontFamily: "'Manrope', sans-serif" }}>
-            Claude Code <span className="text-[#D97757]">Haha</span>
-          </span>
+    <aside
+      onMouseDown={handleSidebarDrag}
+      className="sidebar-panel relative h-full flex flex-col bg-[var(--color-surface-sidebar)] border-r border-[var(--color-border)] select-none"
+      data-state={sidebarOpen ? 'open' : 'closed'}
+      aria-label="Sidebar"
+    >
+      <div className={`px-3 pb-2 ${isTauri && !isWindows ? 'pt-[44px]' : 'pt-3'}`}>
+        <div className={`flex ${sidebarOpen ? 'items-center justify-between gap-3' : 'flex-col items-center gap-2'}`}>
+          <div className={`flex min-w-0 items-center ${sidebarOpen ? 'gap-2.5' : 'justify-center'}`}>
+            <img src="/app-icon.png" alt="" className="h-8 w-8 flex-shrink-0" />
+            <span
+              className={`sidebar-copy ${sidebarOpen ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} text-[13px] font-semibold tracking-tight text-[var(--color-text-primary)]`}
+              style={{ fontFamily: 'var(--font-headline)' }}
+            >
+              Claude Code <span className="text-[var(--color-primary-container)]">Haha</span>
+            </span>
+          </div>
+          <div className={`flex items-center ${sidebarOpen ? 'gap-1.5' : 'flex-col gap-2'}`}>
+            <a
+              href="https://github.com/NanmiCoder/cc-haha"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`sidebar-copy ${sidebarOpen ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} inline-flex items-center justify-center rounded-md p-1 text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]`}
+              title="GitHub"
+              tabIndex={sidebarOpen ? undefined : -1}
+              aria-hidden={!sidebarOpen}
+            >
+              <GitHubIcon />
+            </a>
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              data-testid={sidebarOpen ? 'sidebar-collapse-button' : 'sidebar-expand-button'}
+              className={`sidebar-toggle-button ${sidebarOpen ? 'sidebar-toggle-button--open h-8 w-8' : 'sidebar-toggle-button--collapsed h-8 w-8'} flex items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface-sidebar)]`}
+              aria-label={sidebarOpen ? t('sidebar.collapse') : t('sidebar.expand')}
+              title={sidebarOpen ? t('sidebar.collapse') : t('sidebar.expand')}
+            >
+              <SidebarToggleIcon collapsed={!sidebarOpen} />
+            </button>
+          </div>
         </div>
-        <a
-          href="https://github.com/NanmiCoder/cc-haha"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-md p-1 text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]"
-          title="GitHub"
-        >
-          <GitHubIcon />
-        </a>
       </div>
-      {/* Navigation */}
-      <div className="px-3 pb-3 flex flex-col gap-0.5">
+
+      <div className={`px-3 pb-3 flex flex-col ${sidebarOpen ? 'gap-0.5' : 'items-center gap-2'}`}>
         <NavItem
           active={false}
+          collapsed={!sidebarOpen}
+          label={t('sidebar.newSession')}
           onClick={async () => {
             try {
-              // Use current active session's workDir as default for new session
               const currentTabId = useTabStore.getState().activeTabId
               const currentSession = currentTabId
                 ? useSessionStore.getState().sessions.find((s) => s.id === currentTabId)
@@ -145,8 +185,7 @@ export function Sidebar() {
             } catch (error) {
               addToast({
                 type: 'error',
-                message:
-                  error instanceof Error ? error.message : t('sidebar.sessionListFailed'),
+                message: error instanceof Error ? error.message : t('sidebar.sessionListFailed'),
               })
             }
           }}
@@ -156,6 +195,8 @@ export function Sidebar() {
         </NavItem>
         <NavItem
           active={activeTabId === SCHEDULED_TAB_ID}
+          collapsed={!sidebarOpen}
+          label={t('sidebar.scheduled')}
           onClick={() => useTabStore.getState().openTab(SCHEDULED_TAB_ID, t('sidebar.scheduled'), 'scheduled')}
           icon={<ClockIcon />}
         >
@@ -163,108 +204,132 @@ export function Sidebar() {
         </NavItem>
       </div>
 
-      {/* Project filter */}
-      <div className="px-3 pb-1 flex items-center justify-between">
-        <ProjectFilter />
-      </div>
-
-      {/* Search */}
-      <div className="px-3 pb-2">
-        <input
-          id="sidebar-search"
-          type="text"
-          placeholder={t('sidebar.searchPlaceholder')}
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full h-7 px-2 text-xs rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none focus:border-[var(--color-border-focus)]"
-        />
-      </div>
-
-      {/* Session list — grouped by time */}
-      <div className="flex-1 overflow-y-auto px-3">
-        {error && (
-          <div className="mx-1 mt-2 rounded-[var(--radius-md)] border border-[var(--color-error)]/20 bg-[var(--color-error)]/5 px-3 py-2">
-            <div className="text-xs font-medium text-[var(--color-error)]">{t('sidebar.sessionListFailed')}</div>
-            <div className="mt-1 text-[11px] text-[var(--color-text-secondary)] break-words">{error}</div>
-            <button
-              onClick={() => fetchSessions()}
-              className="mt-2 text-[11px] font-medium text-[var(--color-brand)] hover:underline"
-            >
-              {t('common.retry')}
-            </button>
-          </div>
-        )}
-        {filteredSessions.length === 0 && (
-          <div className="px-3 py-4 text-xs text-[var(--color-text-tertiary)] text-center">
-            {searchQuery ? t('sidebar.noMatching') : t('sidebar.noSessions')}
-          </div>
-        )}
-        {TIME_GROUP_ORDER.map((group) => {
-          const items = timeGroups.get(group)
-          if (!items || items.length === 0) return null
-          return (
-            <div key={group} className="mb-1">
-              <div className="px-2 pt-3 pb-1 text-[11px] font-semibold text-[var(--color-text-tertiary)] tracking-wide">
-                {TIME_GROUP_LABELS[group]}
-              </div>
-              {items.map((session) => (
-                <div key={session.id} className="relative">
-                  {renamingId === session.id ? (
-                    <input
-                      autoFocus
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={handleFinishRename}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleFinishRename()
-                        if (e.key === 'Escape') { setRenamingId(null); setRenameValue('') }
-                      }}
-                      className="w-full px-3 py-2 text-sm rounded-[var(--radius-md)] border border-[var(--color-border-focus)] bg-[var(--color-surface)] text-[var(--color-text-primary)] outline-none ml-1"
-                    />
-                  ) : (
-                    <button
-                      onClick={() => {
-                        useTabStore.getState().openTab(session.id, session.title)
-                        useChatStore.getState().connectToSession(session.id)
-                      }}
-                      onContextMenu={(e) => handleContextMenu(e, session.id)}
-                      className={`
-                        w-full flex items-center gap-2 pl-4 pr-3 py-1.5 text-sm text-left rounded-[var(--radius-md)] transition-colors duration-200 group
-                        ${session.id === activeTabId
-                          ? 'bg-[var(--color-surface-selected)] text-[var(--color-text-primary)]'
-                          : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
-                        }
-                      `}
-                    >
-                      <span className="w-1 h-1 rounded-full flex-shrink-0" style={{
-                        backgroundColor: session.id === activeTabId ? 'var(--color-brand)' : 'var(--color-text-tertiary)',
-                        opacity: session.id === activeTabId ? 1 : 0.5,
-                      }} />
-                      <span className="truncate flex-1">{session.title || 'Untitled'}</span>
-                      {!session.workDirExists && (
-                        <span
-                          className="text-[10px] text-[var(--color-warning)] flex-shrink-0"
-                          title={session.workDir ?? ''}
-                        >
-                          {t('sidebar.missingDir')}
-                        </span>
-                      )}
-                      <span className="text-[10px] text-[var(--color-text-tertiary)] flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {formatRelativeTime(session.modifiedAt)}
-                      </span>
-                    </button>
-                  )}
-                </div>
-              ))}
+      {sidebarOpen ? (
+        <>
+          <div
+            data-testid="sidebar-project-filter-section"
+            className="sidebar-section sidebar-section--visible relative z-20 flex-none px-3 pb-2"
+            style={{ overflow: 'visible' }}
+          >
+            <div className="flex h-9 items-center rounded-[14px] border border-[var(--color-sidebar-search-border)] bg-[var(--color-sidebar-search-bg)] pl-1.5 pr-3 transition-colors focus-within:border-[var(--color-border-focus)]">
+              <ProjectFilter variant="embedded" />
+              <span className="mx-2 h-4 w-px bg-[var(--color-border)]/80" aria-hidden="true" />
+              <span className="pointer-events-none flex shrink-0 items-center text-[var(--color-text-tertiary)]">
+                <SearchIcon />
+              </span>
+              <input
+                id="sidebar-search"
+                type="text"
+                placeholder={t('sidebar.searchPlaceholder')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="min-w-0 flex-1 bg-transparent pl-2 pr-0 text-[13px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
+              />
             </div>
-          )
-        })}
-      </div>
+          </div>
 
-      {/* Settings button at bottom */}
-      <div className="p-3 border-t border-[var(--color-border)]">
+          <div
+            data-testid="sidebar-session-list-section"
+            className="sidebar-section sidebar-section--visible flex flex-1 min-h-0 flex-col"
+          >
+            <div className="sidebar-scroll-area min-h-0 flex-1 overflow-y-auto px-3">
+              {error && (
+                <div className="mx-1 mt-2 rounded-[var(--radius-md)] border border-[var(--color-error)]/20 bg-[var(--color-error)]/5 px-3 py-2">
+                  <div className="text-xs font-medium text-[var(--color-error)]">{t('sidebar.sessionListFailed')}</div>
+                  <div className="mt-1 text-[11px] text-[var(--color-text-secondary)] break-words">{error}</div>
+                  <button
+                    onClick={() => fetchSessions()}
+                    className="mt-2 text-[11px] font-medium text-[var(--color-brand)] hover:underline"
+                  >
+                    {t('common.retry')}
+                  </button>
+                </div>
+              )}
+              {filteredSessions.length === 0 && (
+                <div className="px-3 py-4 text-center text-xs text-[var(--color-text-tertiary)]">
+                  {searchQuery ? t('sidebar.noMatching') : t('sidebar.noSessions')}
+                </div>
+              )}
+              {TIME_GROUP_ORDER.map((group) => {
+                const items = timeGroups.get(group)
+                if (!items || items.length === 0) return null
+                return (
+                  <div key={group} className="mb-1">
+                    <div className="px-2 pb-1 pt-4 text-[11px] font-semibold tracking-wide text-[var(--color-text-tertiary)]">
+                      {timeGroupLabels[group]}
+                    </div>
+                    {items.map((session) => (
+                      <div key={session.id} className="relative">
+                        {renamingId === session.id ? (
+                          <input
+                            autoFocus
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onBlur={handleFinishRename}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleFinishRename()
+                              if (e.key === 'Escape') {
+                                setRenamingId(null)
+                                setRenameValue('')
+                              }
+                            }}
+                            className="ml-1 w-full rounded-[var(--radius-md)] border border-[var(--color-border-focus)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => {
+                              useTabStore.getState().openTab(session.id, session.title)
+                              useChatStore.getState().connectToSession(session.id)
+                            }}
+                            onContextMenu={(e) => handleContextMenu(e, session.id)}
+                            className={`
+                              group w-full rounded-[12px] px-3 py-2 text-left text-sm transition-colors duration-200
+                              ${session.id === activeTabId
+                                ? 'bg-[var(--color-sidebar-item-active)] text-[var(--color-text-primary)]'
+                                : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-sidebar-item-hover)]'
+                              }
+                            `}
+                          >
+                            <span className="flex items-center gap-2.5">
+                              <span
+                                className="h-1.5 w-1.5 flex-shrink-0 rounded-full"
+                                style={{
+                                  backgroundColor: session.id === activeTabId ? 'var(--color-brand)' : 'var(--color-text-tertiary)',
+                                  opacity: session.id === activeTabId ? 1 : 0.5,
+                                }}
+                              />
+                              <span className="flex-1 truncate font-medium tracking-[-0.01em]">{session.title || 'Untitled'}</span>
+                              {!session.workDirExists && (
+                                <span
+                                  className="flex-shrink-0 text-[10px] text-[var(--color-warning)]"
+                                  title={session.workDir ?? ''}
+                                >
+                                  {t('sidebar.missingDir')}
+                                </span>
+                              )}
+                              <span className="flex-shrink-0 text-[10px] text-[var(--color-text-tertiary)] opacity-0 transition-opacity group-hover:opacity-100">
+                                {formatRelativeTime(session.modifiedAt)}
+                              </span>
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="flex-1" aria-hidden="true" />
+      )}
+
+      <div className={`border-t border-[var(--color-border)] p-3 ${sidebarOpen ? '' : 'flex justify-center'}`}>
         <NavItem
           active={activeTabId === SETTINGS_TAB_ID}
+          collapsed={!sidebarOpen}
+          label={t('sidebar.settings')}
           onClick={() => useTabStore.getState().openTab(SETTINGS_TAB_ID, t('sidebar.settings'), 'settings')}
           icon={<span className="material-symbols-outlined text-[18px]">settings</span>}
         >
@@ -272,29 +337,39 @@ export function Sidebar() {
         </NavItem>
       </div>
 
-      {/* Context menu */}
-      {contextMenu && (
+      {contextMenu && sidebarOpen && (
         <div
-          className="fixed z-50 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] py-1 min-w-[140px]"
+          className="fixed z-50 min-w-[140px] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1"
           style={{ left: contextMenu.x, top: contextMenu.y, boxShadow: 'var(--shadow-dropdown)' }}
         >
           <button
             onClick={() => {
-              const session = sessions.find(s => s.id === contextMenu.id)
+              const session = sessions.find((s) => s.id === contextMenu.id)
               handleStartRename(contextMenu.id, session?.title || '')
             }}
-            className="w-full px-3 py-1.5 text-xs text-left text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)] transition-colors"
+            className="w-full px-3 py-1.5 text-left text-xs text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('common.rename')}
           </button>
           <button
             onClick={() => handleDelete(contextMenu.id)}
-            className="w-full px-3 py-1.5 text-xs text-left text-[var(--color-error)] hover:bg-[var(--color-surface-hover)] transition-colors"
+            className="w-full px-3 py-1.5 text-left text-xs text-[var(--color-error)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('common.delete')}
           </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteSessionId !== null}
+        onClose={() => setPendingDeleteSessionId(null)}
+        onConfirm={confirmDelete}
+        title={t('common.delete')}
+        body={pendingDeleteSessionId ? t('sidebar.confirmDelete') : ''}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant="danger"
+      />
     </aside>
   )
 }
@@ -323,20 +398,41 @@ function groupByTime(sessions: SessionListItem[]): Map<TimeGroup, SessionListIte
   return groups
 }
 
-function NavItem({ active, onClick, icon, children }: { active: boolean; onClick: () => void; icon: React.ReactNode; children: React.ReactNode }) {
+function NavItem({
+  active,
+  collapsed,
+  label,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean
+  collapsed: boolean
+  label: string
+  onClick: () => void
+  icon: React.ReactNode
+  children: React.ReactNode
+}) {
   return (
     <button
       onClick={onClick}
+      aria-label={label}
+      title={collapsed ? label : undefined}
       className={`
-        w-full flex items-center gap-2.5 px-3 py-2 text-sm rounded-[var(--radius-md)] transition-colors duration-200
+        flex items-center transition-colors duration-200
+        ${collapsed ? 'h-10 w-10 justify-center rounded-[var(--radius-md)] px-0 py-0' : 'w-full gap-2.5 rounded-[12px] px-3 py-2.5 text-sm'}
         ${active
-          ? 'bg-[var(--color-surface-selected)] text-[var(--color-text-primary)] font-medium'
-          : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
+          ? 'bg-[var(--color-sidebar-item-active)] font-medium text-[var(--color-text-primary)]'
+          : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)]'
         }
       `}
     >
-      {icon}
-      {children}
+      <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
+        {icon}
+      </span>
+      <span className={`sidebar-copy ${collapsed ? 'sidebar-copy--hidden' : 'sidebar-copy--visible'}`}>
+        {children}
+      </span>
     </button>
   )
 }
@@ -375,6 +471,33 @@ function ClockIcon() {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
       <polyline points="12 6 12 12 16 14" />
+    </svg>
+  )
+}
+
+function SearchIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  )
+}
+
+function SidebarToggleIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      width={collapsed ? 16 : 14}
+      height={collapsed ? 16 : 14}
+      viewBox="0 0 14 14"
+      fill="none"
+      className={`sidebar-toggle-icon ${collapsed ? 'sidebar-toggle-icon--collapsed' : 'sidebar-toggle-icon--open'}`}
+      aria-hidden="true"
+    >
+      <path
+        d={collapsed ? 'M5 3 9 7l-4 4' : 'M9 3 5 7l4 4'}
+        className="sidebar-toggle-chevron"
+      />
     </svg>
   )
 }

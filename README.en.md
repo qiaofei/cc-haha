@@ -212,6 +212,10 @@ http://127.0.0.1:2024
 
 This project is maintained in the author's spare time. Corporate or individual sponsorships are welcome to support ongoing development. Custom features, integrations, and business partnerships are also open for discussion.
 
+| Sponsor | Description |
+|------|------|
+| <a href="https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler"><img src="docs/images/sponsors/legionproxy-logo.svg" width="180" alt="LegionProxy"></a> | [LegionProxy](https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler) provides residential proxies built for account registration and automation, with 74M+ real residential IPs, 195+ countries, HTTP/3 high-speed connections, starting at $0.60/GB. |
+
 📧 **Contact**: relakkes@gmail.com
 
 ---

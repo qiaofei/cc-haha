@@ -165,7 +165,7 @@ export function TaskRow({ task, showLogs, onToggleLogs }: Props) {
                   {/* Delete */}
                   <button
                     onClick={() => setConfirmAction('delete')}
-                    className={`${menuItem} text-[var(--color-error)] hover:bg-red-50`}
+                    className={`${menuItem} text-[var(--color-error)] hover:bg-[var(--color-error-container)]/18`}
                   >
                     <span className="material-symbols-outlined text-[16px]">delete</span>
                     {t('common.delete')}
@@ -239,8 +239,10 @@ function ConfirmPopover({ message, confirmLabel, onConfirm, onCancel, cancelLabe
         </button>
         <button
           onClick={onConfirm}
-          className={`px-2.5 py-1 text-xs rounded-[var(--radius-sm)] text-white hover:opacity-90 transition-opacity ${
-            variant === 'error' ? 'bg-[var(--color-error)]' : 'bg-[var(--color-brand)]'
+          className={`px-2.5 py-1 text-xs rounded-[var(--radius-sm)] hover:opacity-90 transition-opacity ${
+            variant === 'error'
+              ? 'bg-[var(--color-error-container)] text-[var(--color-on-error-container)]'
+              : 'bg-[image:var(--gradient-btn-primary)] text-[var(--color-btn-primary-fg)]'
           }`}
         >
           {confirmLabel}

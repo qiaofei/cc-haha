@@ -23,24 +23,24 @@ function inferLanguage(filePath: string): string {
 /** Shared warm syntax theme — must stay in sync with CodeViewer */
 const warmSyntaxTheme: PrismTheme = {
   plain: {
-    color: '#24201E',
+    color: 'var(--color-code-fg)',
     backgroundColor: 'transparent',
   },
   styles: [
-    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: '#8C7E75', fontStyle: 'italic' as const } },
-    { types: ['string', 'attr-value', 'template-string'], style: { color: '#437220' } },
-    { types: ['keyword', 'selector', 'important', 'atrule'], style: { color: '#B8533B' } },
-    { types: ['function'], style: { color: '#1D5A8C' } },
-    { types: ['tag'], style: { color: '#B8533B' } },
-    { types: ['number', 'boolean'], style: { color: '#1B7A6A' } },
-    { types: ['operator'], style: { color: '#24201E' } },
-    { types: ['punctuation'], style: { color: '#5C504A' } },
-    { types: ['variable', 'parameter'], style: { color: '#24201E' } },
-    { types: ['property', 'attr-name'], style: { color: '#7A3E20' } },
-    { types: ['builtin', 'class-name', 'constant', 'symbol'], style: { color: '#7E5520' } },
-    { types: ['regex'], style: { color: '#C15F3C' } },
-    { types: ['inserted'], style: { color: '#1A7F37' } },
-    { types: ['deleted'], style: { color: '#CF222E' } },
+    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: 'var(--color-code-comment)', fontStyle: 'italic' as const } },
+    { types: ['string', 'attr-value', 'template-string'], style: { color: 'var(--color-code-string)' } },
+    { types: ['keyword', 'selector', 'important', 'atrule'], style: { color: 'var(--color-code-keyword)' } },
+    { types: ['function'], style: { color: 'var(--color-code-function)' } },
+    { types: ['tag'], style: { color: 'var(--color-code-keyword)' } },
+    { types: ['number', 'boolean'], style: { color: 'var(--color-code-number)' } },
+    { types: ['operator'], style: { color: 'var(--color-code-fg)' } },
+    { types: ['punctuation'], style: { color: 'var(--color-code-punctuation)' } },
+    { types: ['variable', 'parameter'], style: { color: 'var(--color-code-fg)' } },
+    { types: ['property', 'attr-name'], style: { color: 'var(--color-code-property)' } },
+    { types: ['builtin', 'class-name', 'constant', 'symbol'], style: { color: 'var(--color-code-type)' } },
+    { types: ['regex'], style: { color: 'var(--color-primary-container)' } },
+    { types: ['inserted'], style: { color: 'var(--color-code-inserted)' } },
+    { types: ['deleted'], style: { color: 'var(--color-code-deleted)' } },
   ],
 }
 
@@ -65,30 +65,30 @@ function highlightSyntax(str: string, language: string) {
 const diffStyles = {
   variables: {
     light: {
-      diffViewerBackground: '#FDFCF9',
-      diffViewerColor: '#3B3330',
-      addedBackground: '#E8F5E2',
-      addedColor: '#3B3330',
-      removedBackground: '#FDECEA',
-      removedColor: '#3B3330',
-      wordAddedBackground: '#B8E4A8',
-      wordRemovedBackground: '#F5B8B4',
-      addedGutterBackground: '#D4EDCA',
-      removedGutterBackground: '#F9D4D0',
-      gutterBackground: '#F4F4F0',
-      gutterBackgroundDark: '#EFEEEA',
-      highlightBackground: '#FFF5D6',
-      highlightGutterBackground: '#FFECB3',
-      codeFoldGutterBackground: '#E4EDF6',
-      codeFoldBackground: '#EDF4FB',
-      emptyLineBackground: '#F4F4F0',
-      gutterColor: '#87736D',
-      addedGutterColor: '#1A7F37',
-      removedGutterColor: '#CF222E',
-      codeFoldContentColor: '#87736D',
-      diffViewerTitleBackground: '#F4F4F0',
-      diffViewerTitleColor: '#87736D',
-      diffViewerTitleBorderColor: '#DAC1BA',
+      diffViewerBackground: 'var(--color-code-bg)',
+      diffViewerColor: 'var(--color-code-fg)',
+      addedBackground: 'var(--color-diff-added-bg)',
+      addedColor: 'var(--color-code-fg)',
+      removedBackground: 'var(--color-diff-removed-bg)',
+      removedColor: 'var(--color-code-fg)',
+      wordAddedBackground: 'var(--color-diff-added-word)',
+      wordRemovedBackground: 'var(--color-diff-removed-word)',
+      addedGutterBackground: 'var(--color-diff-added-gutter)',
+      removedGutterBackground: 'var(--color-diff-removed-gutter)',
+      gutterBackground: 'var(--color-surface-container-low)',
+      gutterBackgroundDark: 'var(--color-surface-container)',
+      highlightBackground: 'var(--color-diff-highlight-bg)',
+      highlightGutterBackground: 'var(--color-diff-highlight-gutter)',
+      codeFoldGutterBackground: 'var(--color-surface-container-high)',
+      codeFoldBackground: 'var(--color-surface-container-highest)',
+      emptyLineBackground: 'var(--color-surface-container-low)',
+      gutterColor: 'var(--color-text-tertiary)',
+      addedGutterColor: 'var(--color-diff-added-text)',
+      removedGutterColor: 'var(--color-diff-removed-text)',
+      codeFoldContentColor: 'var(--color-text-tertiary)',
+      diffViewerTitleBackground: 'var(--color-diff-title-bg)',
+      diffViewerTitleColor: 'var(--color-diff-title-color)',
+      diffViewerTitleBorderColor: 'var(--color-diff-title-border)',
     },
   },
   diffContainer: {
@@ -128,8 +128,8 @@ export function DiffViewer({ filePath, oldString, newString }: Props) {
             {filePath}
           </div>
           <div className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em]">
-            <span className="rounded-full bg-[#E8F5E2] px-2 py-0.5 text-[#1A7F37]">+{additions}</span>
-            <span className="rounded-full bg-[#FDECEA] px-2 py-0.5 text-[#CF222E]">-{deletions}</span>
+            <span className="rounded-full bg-[var(--color-diff-added-bg)] px-2 py-0.5 text-[var(--color-diff-added-text)]">+{additions}</span>
+            <span className="rounded-full bg-[var(--color-diff-removed-bg)] px-2 py-0.5 text-[var(--color-diff-removed-text)]">-{deletions}</span>
           </div>
         </div>
         <CopyButton
@@ -149,7 +149,7 @@ export function DiffViewer({ filePath, oldString, newString }: Props) {
           renderContent={(str) => highlightSyntax(str, language)}
           hideLineNumbers={false}
           styles={diffStyles}
-          useDarkTheme={false}
+          useDarkTheme={document.documentElement.getAttribute('data-theme') === 'dark'}
         />
       </div>
     </div>

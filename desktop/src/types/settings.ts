@@ -3,6 +3,7 @@
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'dontAsk'
 
 export type EffortLevel = 'low' | 'medium' | 'high' | 'max'
+export type ThemeMode = 'light' | 'dark'
 
 export type ModelInfo = {
   id: string
@@ -16,5 +17,7 @@ export type UserSettings = {
   modelContext?: string
   effort?: EffortLevel
   permissionMode?: PermissionMode
+  theme?: ThemeMode
+  skipWebFetchPreflight?: boolean
   [key: string]: unknown
 }

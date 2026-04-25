@@ -18,17 +18,17 @@ type Props = {
  * Uses Material Symbols Outlined names.
  */
 const TOOL_META: Record<string, { icon: string; label: string; color: string }> = {
-  Bash: { icon: 'terminal', label: 'Bash', color: '#CA8A04' },
-  Edit: { icon: 'edit_note', label: 'Edit File', color: '#8F482F' },
-  Write: { icon: 'edit_document', label: 'Write File', color: '#16A34A' },
-  Read: { icon: 'description', label: 'Read File', color: '#2D628F' },
-  Glob: { icon: 'search', label: 'Glob Search', color: '#2D628F' },
-  Grep: { icon: 'find_in_page', label: 'Grep Search', color: '#2D628F' },
-  Agent: { icon: 'smart_toy', label: 'Agent', color: '#7C3AED' },
-  WebSearch: { icon: 'travel_explore', label: 'Web Search', color: '#2D628F' },
-  WebFetch: { icon: 'cloud_download', label: 'Web Fetch', color: '#2D628F' },
-  NotebookEdit: { icon: 'note', label: 'Notebook Edit', color: '#8F482F' },
-  Skill: { icon: 'auto_awesome', label: 'Skill', color: '#7C3AED' },
+  Bash: { icon: 'terminal', label: 'Bash', color: 'var(--color-warning)' },
+  Edit: { icon: 'edit_note', label: 'Edit File', color: 'var(--color-brand)' },
+  Write: { icon: 'edit_document', label: 'Write File', color: 'var(--color-success)' },
+  Read: { icon: 'description', label: 'Read File', color: 'var(--color-secondary)' },
+  Glob: { icon: 'search', label: 'Glob Search', color: 'var(--color-secondary)' },
+  Grep: { icon: 'find_in_page', label: 'Grep Search', color: 'var(--color-secondary)' },
+  Agent: { icon: 'smart_toy', label: 'Agent', color: 'var(--color-tertiary)' },
+  WebSearch: { icon: 'travel_explore', label: 'Web Search', color: 'var(--color-secondary)' },
+  WebFetch: { icon: 'cloud_download', label: 'Web Fetch', color: 'var(--color-secondary)' },
+  NotebookEdit: { icon: 'note', label: 'Notebook Edit', color: 'var(--color-brand)' },
+  Skill: { icon: 'auto_awesome', label: 'Skill', color: 'var(--color-tertiary)' },
 }
 
 /**
@@ -100,9 +100,9 @@ function renderPermissionPreview(toolName: string, input: unknown) {
 
   if (toolName === 'Bash' && typeof obj.command === 'string') {
     return (
-      <div className="overflow-x-auto rounded-[var(--radius-md)] bg-[#1e1e1e] px-3 py-2.5">
-        <pre className="font-[var(--font-mono)] text-[11px] leading-[1.3] text-[#d4d4d4] whitespace-pre-wrap break-words">
-          <span className="text-[#28c840] select-none">$ </span>{obj.command}
+      <div className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--color-terminal-bg)] px-3 py-2.5">
+        <pre className="font-[var(--font-mono)] text-[11px] leading-[1.3] text-[var(--color-terminal-fg)] whitespace-pre-wrap break-words">
+          <span className="text-[var(--color-terminal-accent)] select-none">$ </span>{obj.command}
         </pre>
       </div>
     )
@@ -119,7 +119,7 @@ export function PermissionDialog({ requestId, toolName, input, description }: Pr
   const isPending = pendingPermission?.requestId === requestId
   const [showRaw, setShowRaw] = useState(false)
 
-  const meta = TOOL_META[toolName] || { icon: 'shield', label: toolName, color: '#87736D' }
+  const meta = TOOL_META[toolName] || { icon: 'shield', label: toolName, color: 'var(--color-text-tertiary)' }
   const details = extractToolDetails(toolName, input, t)
   const rawInput = typeof input === 'string' ? input : JSON.stringify(input, null, 2)
   const preview = renderPermissionPreview(toolName, input)
@@ -127,7 +127,7 @@ export function PermissionDialog({ requestId, toolName, input, description }: Pr
   const allowRawToggle = !preview
 
   return (
-    <div className={`mb-4 ml-10 overflow-hidden rounded-[var(--radius-lg)] border ${
+    <div className={`mb-4 overflow-hidden rounded-[var(--radius-lg)] border ${
       isPending
         ? 'border-[var(--color-warning)] bg-[var(--color-surface-container-lowest)]'
         : 'border-[var(--color-outline-variant)]/40 bg-[var(--color-surface-container-low)] opacity-70'
@@ -215,7 +215,7 @@ export function PermissionDialog({ requestId, toolName, input, description }: Pr
         )}
 
         {allowRawToggle && showRaw && (
-          <pre className="mt-2 max-h-[220px] overflow-y-auto overflow-x-auto rounded-[var(--radius-md)] bg-[#1e1e1e] px-3 py-2.5 font-[var(--font-mono)] text-[11px] leading-[1.3] text-[#d4d4d4] whitespace-pre-wrap break-words">
+          <pre className="mt-2 max-h-[220px] overflow-y-auto overflow-x-auto rounded-[var(--radius-md)] bg-[var(--color-terminal-bg)] px-3 py-2.5 font-[var(--font-mono)] text-[11px] leading-[1.3] text-[var(--color-terminal-fg)] whitespace-pre-wrap break-words">
             {rawInput}
           </pre>
         )}
@@ -237,7 +237,7 @@ export function PermissionDialog({ requestId, toolName, input, description }: Pr
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => activeTabId && respondToPermission(activeTabId, requestId, true, 'always')}
+            onClick={() => activeTabId && respondToPermission(activeTabId, requestId, true, { rule: 'always' })}
             icon={
               <span className="material-symbols-outlined text-[14px]">verified</span>
             }

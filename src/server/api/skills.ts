@@ -6,10 +6,14 @@
  *       ?source=user&name=xxx
  */
 
-import * as os from 'os'
 import * as path from 'path'
 import * as fs from 'fs/promises'
 import { parseFrontmatter } from '../../utils/frontmatterParser.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { getProjectDirsUpToHome } from '../../utils/markdownConfigLoader.js'
+import { getCwd } from '../../utils/cwd.js'
+import { loadAllPluginsCacheOnly } from '../../utils/plugins/pluginLoader.js'
+import type { LoadedPlugin } from '../../types/plugin.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -18,12 +22,15 @@ type SkillMeta = {
   name: string
   displayName?: string
   description: string
-  source: 'user' | 'project'
+  source: 'user' | 'project' | 'plugin'
   userInvocable: boolean
   version?: string
   contentLength: number
   hasDirectory: boolean
+  pluginName?: string
 }
+
+type SkillSource = SkillMeta['source']
 
 type FileTreeNode = {
   name: string
@@ -74,13 +81,22 @@ function normalizeFrontmatter(content: string, sourcePath?: string): {
 }
 
 function getUserSkillsDir(): string {
-  return path.join(os.homedir(), '.claude', 'skills')
+  return path.join(getClaudeConfigHomeDir(), 'skills')
+}
+
+function getRequestedCwd(url: URL): string {
+  return url.searchParams.get('cwd') || getCwd()
+}
+
+function getProjectSkillsDirs(cwd: string): string[] {
+  return getProjectDirsUpToHome('skills', cwd)
 }
 
 async function loadSkillMeta(
   skillDir: string,
   skillName: string,
-  source: 'user' | 'project',
+  source: SkillSource,
+  pluginName?: string,
 ): Promise<SkillMeta | null> {
   const skillFile = path.join(skillDir, 'SKILL.md')
   try {
@@ -104,6 +120,7 @@ async function loadSkillMeta(
       version: frontmatter.version != null ? String(frontmatter.version) : undefined,
       contentLength: raw.length,
       hasDirectory: true,
+      pluginName,
     }
   } catch {
     return null
@@ -191,6 +208,153 @@ async function buildFileTree(
   return { tree, files }
 }
 
+async function collectSkillsFromRoots(
+  skillRoots: string[],
+  source: SkillSource,
+): Promise<SkillMeta[]> {
+  const skills: SkillMeta[] = []
+  const seenNames = new Set<string>()
+
+  for (const root of skillRoots) {
+    let entries: import('fs').Dirent[]
+    try {
+      entries = await fs.readdir(root, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.') || seenNames.has(entry.name)) {
+        continue
+      }
+
+      const meta = await loadSkillMeta(path.join(root, entry.name), entry.name, source)
+      if (!meta) continue
+
+      seenNames.add(entry.name)
+      skills.push(meta)
+    }
+  }
+
+  return skills
+}
+
+async function resolveSkillDir(
+  source: SkillSource,
+  name: string,
+  cwd: string,
+): Promise<string | null> {
+  const skillRoots =
+    source === 'user'
+      ? [getUserSkillsDir()]
+      : source === 'project'
+        ? getProjectSkillsDirs(cwd)
+        : []
+
+  for (const root of skillRoots) {
+    const skillDir = path.join(root, name)
+    try {
+      const stat = await fs.stat(skillDir)
+      if (stat.isDirectory()) {
+        return skillDir
+      }
+    } catch {
+      // Try the next candidate root.
+    }
+  }
+
+  return null
+}
+
+type PluginSkillLocation = {
+  skillDir: string
+  pluginName: string
+}
+
+function buildPluginSkillName(pluginName: string, skillDir: string): string {
+  return `${pluginName}:${path.basename(skillDir)}`
+}
+
+async function collectPluginSkillDirectories(): Promise<Map<string, PluginSkillLocation>> {
+  const locations = new Map<string, PluginSkillLocation>()
+
+  let enabledPlugins: LoadedPlugin[]
+  try {
+    const result = await loadAllPluginsCacheOnly()
+    enabledPlugins = result.enabled
+  } catch {
+    return locations
+  }
+
+  for (const plugin of enabledPlugins) {
+    const candidateRoots = [plugin.skillsPath, ...(plugin.skillsPaths ?? [])]
+
+    for (const root of candidateRoots) {
+      if (!root) continue
+
+      const directSkillFile = path.join(root, 'SKILL.md')
+      try {
+        const stat = await fs.stat(directSkillFile)
+        if (stat.isFile()) {
+          const name = buildPluginSkillName(plugin.name, root)
+          if (!locations.has(name)) {
+            locations.set(name, { skillDir: root, pluginName: plugin.name })
+          }
+          continue
+        }
+      } catch {
+        // Fall through and inspect as a skills root.
+      }
+
+      let entries: import('fs').Dirent[]
+      try {
+        entries = await fs.readdir(root, { withFileTypes: true })
+      } catch {
+        continue
+      }
+
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
+
+        const skillDir = path.join(root, entry.name)
+        const skillFile = path.join(skillDir, 'SKILL.md')
+        try {
+          const stat = await fs.stat(skillFile)
+          if (!stat.isFile()) continue
+        } catch {
+          continue
+        }
+
+        const name = buildPluginSkillName(plugin.name, skillDir)
+        if (!locations.has(name)) {
+          locations.set(name, { skillDir, pluginName: plugin.name })
+        }
+      }
+    }
+  }
+
+  return locations
+}
+
+async function collectPluginSkills(): Promise<SkillMeta[]> {
+  const locations = await collectPluginSkillDirectories()
+  const skills: SkillMeta[] = []
+
+  for (const [name, location] of locations) {
+    const meta = await loadSkillMeta(
+      location.skillDir,
+      name,
+      'plugin',
+      location.pluginName,
+    )
+    if (meta) {
+      skills.push(meta)
+    }
+  }
+
+  return skills
+}
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export async function handleSkillsApi(
@@ -207,7 +371,7 @@ export async function handleSkillsApi(
 
     switch (sub) {
       case undefined:
-        return await listSkills()
+        return await listSkills(url)
       case 'detail':
         return await getSkillDetail(url)
       default:
@@ -220,25 +384,15 @@ export async function handleSkillsApi(
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
-async function listSkills(): Promise<Response> {
-  const skillsDir = getUserSkillsDir()
-  const skills: SkillMeta[] = []
+async function listSkills(url: URL): Promise<Response> {
+  const cwd = getRequestedCwd(url)
+  const [userSkills, projectSkills, pluginSkills] = await Promise.all([
+    collectSkillsFromRoots([getUserSkillsDir()], 'user'),
+    collectSkillsFromRoots(getProjectSkillsDirs(cwd), 'project'),
+    collectPluginSkills(),
+  ])
 
-  try {
-    const entries = await fs.readdir(skillsDir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
-      const meta = await loadSkillMeta(
-        path.join(skillsDir, entry.name),
-        entry.name,
-        'user',
-      )
-      if (meta) skills.push(meta)
-    }
-  } catch {
-    // skills dir doesn't exist — return empty list
-  }
-
+  const skills = [...userSkills, ...projectSkills, ...pluginSkills]
   skills.sort((a, b) => a.name.localeCompare(b.name))
   return Response.json({ skills })
 }
@@ -256,21 +410,30 @@ async function getSkillDetail(url: URL): Promise<Response> {
     throw ApiError.badRequest('Invalid skill name')
   }
 
-  let skillDir: string
-  if (source === 'user') {
-    skillDir = path.join(getUserSkillsDir(), name)
-  } else {
+  if (source !== 'user' && source !== 'project' && source !== 'plugin') {
     throw ApiError.badRequest(`Unsupported source: ${source}`)
   }
 
-  try {
-    const stat = await fs.stat(skillDir)
-    if (!stat.isDirectory()) throw new Error()
-  } catch {
+  const cwd = getRequestedCwd(url)
+  const pluginLocations =
+    source === 'plugin' ? await collectPluginSkillDirectories() : null
+
+  const pluginLocation = pluginLocations?.get(name)
+  const skillDir =
+    source === 'plugin'
+      ? pluginLocation?.skillDir ?? null
+      : await resolveSkillDir(source, name, cwd)
+
+  if (!skillDir) {
     throw ApiError.notFound(`Skill not found: ${name}`)
   }
 
-  const meta = await loadSkillMeta(skillDir, name, source as 'user')
+  const meta = await loadSkillMeta(
+    skillDir,
+    name,
+    source,
+    pluginLocation?.pluginName,
+  )
   if (!meta) {
     throw ApiError.notFound(`Skill missing SKILL.md: ${name}`)
   }

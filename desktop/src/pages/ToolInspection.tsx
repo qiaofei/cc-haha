@@ -19,7 +19,7 @@ export function ToolInspection() {
           <div className="flex items-start justify-between">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 bg-[var(--color-primary-fixed)] text-[#75331C] text-[10px] font-bold rounded uppercase tracking-widest">
+                <span className="px-2 py-0.5 bg-[var(--color-primary-fixed)] text-[var(--color-on-primary)] text-[10px] font-bold rounded uppercase tracking-widest">
                   {toolType}
                 </span>
                 <h1 className="font-[var(--font-headline)] font-extrabold text-2xl text-[var(--color-on-surface)] tracking-tight">
@@ -126,8 +126,8 @@ export function ToolInspection() {
                 const isRemoved = line.type === 'removed'
 
                 let rowBg = ''
-                if (isAdded) rowBg = 'bg-[rgba(103,123,78,0.15)]'
-                else if (isRemoved) rowBg = 'bg-[rgba(143,72,47,0.15)]'
+                if (isAdded) rowBg = 'bg-[var(--color-diff-added-bg)]'
+                else if (isRemoved) rowBg = 'bg-[var(--color-diff-removed-bg)]'
 
                 let lineNoColor = 'text-[var(--color-outline)] opacity-40'
                 if (isAdded) lineNoColor = 'text-[var(--color-tertiary)] opacity-40'
@@ -161,7 +161,7 @@ export function ToolInspection() {
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
                   <div className="mt-1 w-6 h-6 rounded bg-[var(--color-primary-fixed)] flex items-center justify-center">
-                    <span className="material-symbols-outlined text-[14px] text-[#75331C]">
+                    <span className="material-symbols-outlined text-[14px] text-[var(--color-on-primary)]">
                       psychology
                     </span>
                   </div>
@@ -179,8 +179,8 @@ export function ToolInspection() {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <div className="mt-1 w-6 h-6 rounded bg-[#D4EAB4] flex items-center justify-center">
-                    <span className="material-symbols-outlined text-[14px] text-[#3B4C24]">
+                  <div className="mt-1 w-6 h-6 rounded bg-[var(--color-diff-added-bg)] flex items-center justify-center">
+                    <span className="material-symbols-outlined text-[14px] text-[var(--color-diff-added-text)]">
                       science
                     </span>
                   </div>

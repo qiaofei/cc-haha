@@ -37,15 +37,21 @@ export function ToolCallBlock({ toolName, input, result, compact = false }: Prop
   const icon = TOOL_ICONS[toolName] || 'build'
   const filePath = typeof obj.file_path === 'string' ? obj.file_path : ''
   const summary = getToolSummary(toolName, obj, t)
-  const outputSummary = getToolResultSummary(toolName, result?.content, t)
+  const outputSummary = getToolResultSummary(
+    toolName,
+    result?.content,
+    result?.isError ?? false,
+    t,
+  )
 
   const preview = useMemo(() => renderPreview(toolName, obj, result, t), [obj, result, toolName, t])
   const details = useMemo(() => renderDetails(toolName, obj, t), [obj, toolName, t])
-  const expandable = toolName === 'Edit' || toolName === 'Write'
+  const hasResultDetails = Boolean(result && extractTextContent(result.content))
+  const expandable = toolName === 'Edit' || toolName === 'Write' || hasResultDetails
 
   return (
     <div className={`overflow-hidden rounded-lg border border-[var(--color-border)]/50 bg-[var(--color-surface-container-lowest)] ${
-      compact ? 'mb-0' : 'mb-2 ml-10'
+      compact ? 'mb-0' : 'mb-2'
     }`}>
       <button
         type="button"
@@ -72,7 +78,13 @@ export function ToolCallBlock({ toolName, input, result, compact = false }: Prop
           <span className="flex-1" />
         )}
         {result && outputSummary && (
-          <span className="shrink-0 text-[10px] text-[var(--color-outline)]">
+          <span
+            className={`shrink-0 text-[10px] ${
+              result.isError
+                ? 'text-[var(--color-error)]'
+                : 'text-[var(--color-outline)]'
+            }`}
+          >
             {outputSummary}
           </span>
         )}
@@ -115,8 +127,8 @@ function renderPreview(
   if (toolName === 'Bash' && typeof obj.command === 'string') {
     return (
       <TerminalChrome title={typeof obj.description === 'string' ? obj.description : filePath}>
-        <div className="px-3 py-2.5 font-[var(--font-mono)] text-[11px] leading-[1.3] text-[#d8d8d8]">
-          <span className="text-[#28c840]">$</span> {obj.command}
+        <div className="px-3 py-2.5 font-[var(--font-mono)] text-[11px] leading-[1.3] text-[var(--color-terminal-fg)]">
+          <span className="text-[var(--color-terminal-accent)]">$</span> {obj.command}
         </div>
       </TerminalChrome>
     )
@@ -174,11 +186,29 @@ function renderDetails(toolName: string, obj: Record<string, unknown>, t?: (key:
   )
 }
 
-function getToolResultSummary(toolName: string, content: unknown, t?: (key: TranslationKey, params?: Record<string, string | number>) => string): string {
-  if (toolName === 'Bash') return ''
-
+function getToolResultSummary(
+  toolName: string,
+  content: unknown,
+  isError: boolean,
+  t?: (key: TranslationKey, params?: Record<string, string | number>) => string,
+): string {
   const text = extractTextContent(content)
   if (!text) return ''
+
+  if (isError) {
+    const firstLine = text
+      .split('\n')
+      .map((line) => stripAnsi(line).replace(/\s+/g, ' ').trim())
+      .find(Boolean)
+
+    if (!firstLine) {
+      return t?.('tool.error') ?? 'Error'
+    }
+
+    return firstLine.length <= 72 ? firstLine : `${firstLine.slice(0, 72)}…`
+  }
+
+  if (toolName === 'Bash') return ''
 
   const lineCount = text.split('\n').length
   if (lineCount > 1) {
@@ -189,6 +219,10 @@ function getToolResultSummary(toolName: string, content: unknown, t?: (key: Tran
   if (!compact) return ''
   if (compact.length <= 36) return compact
   return `${compact.slice(0, 36)}…`
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\x1B\[[0-9;]*m/g, '')
 }
 
 function getToolSummary(toolName: string, obj: Record<string, unknown>, t?: (key: TranslationKey, params?: Record<string, string | number>) => string): string {

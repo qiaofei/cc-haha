@@ -7,6 +7,7 @@ import { useUIStore } from '../stores/uiStore'
 export function useKeyboardShortcuts() {
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
   const setActiveView = useUIStore((s) => s.setActiveView)
+  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen)
   const closeModal = useUIStore((s) => s.closeModal)
   const activeModal = useUIStore((s) => s.activeModal)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
@@ -34,8 +35,12 @@ export function useKeyboardShortcuts() {
       // Cmd+K — Focus search (sidebar search input)
       if (meta && e.key === 'k') {
         e.preventDefault()
-        const searchInput = document.querySelector('aside input[type="text"]') as HTMLInputElement
-        searchInput?.focus()
+        setSidebarOpen(true)
+        requestAnimationFrame(() => {
+          const searchInput = document.querySelector('#sidebar-search') as HTMLInputElement | null
+          searchInput?.focus()
+          searchInput?.select()
+        })
       }
 
       // Escape — Close modal or clear state
@@ -56,5 +61,5 @@ export function useKeyboardShortcuts() {
 
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [closeModal, setActiveSession, setActiveView, stopGeneration])
+  }, [closeModal, setActiveSession, setActiveView, setSidebarOpen, stopGeneration])
 }

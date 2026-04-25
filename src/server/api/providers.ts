@@ -4,7 +4,9 @@
  * GET    /api/providers              — list all saved providers + activeId
  * GET    /api/providers/presets       — list available presets
  * GET    /api/providers/auth-status   — check whether any usable auth exists
+ * GET    /api/providers/settings      — read cc-haha managed settings.json
  * POST   /api/providers              — add a provider
+ * PUT    /api/providers/settings      — update cc-haha managed settings.json
  * PUT    /api/providers/:id          — update a provider
  * DELETE /api/providers/:id          — delete a provider
  * POST   /api/providers/:id/activate — activate a saved provider
@@ -60,6 +62,19 @@ export async function handleProvidersApi(
     if (id === 'auth-status' && req.method === 'GET') {
       const status = await providerService.checkAuthStatus()
       return Response.json(status)
+    }
+
+    // /api/providers/settings
+    if (id === 'settings') {
+      if (req.method === 'GET') {
+        return Response.json(await providerService.getManagedSettings())
+      }
+      if (req.method === 'PUT') {
+        const body = await parseJsonBody(req)
+        await providerService.updateManagedSettings(body)
+        return Response.json({ ok: true })
+      }
+      throw methodNotAllowed(req.method)
     }
 
     // POST /api/providers/official

@@ -79,6 +79,7 @@ describe('ActiveSession task polling', () => {
           activeToolName: null,
           activeThinkingId: null,
           pendingPermission: null,
+          pendingComputerUsePermission: null,
           tokenUsage: { input_tokens: 0, output_tokens: 0 },
           elapsedSeconds: 0,
           statusVerb: '',
@@ -99,7 +100,7 @@ describe('ActiveSession task polling', () => {
 
     expect(
       fetchSessionTasks.mock.calls.filter(([currentSessionId]) => currentSessionId === sessionId),
-    ).toHaveLength(3)
+    ).toHaveLength(4)
 
     unmount()
     useCLITaskStore.setState(originalCliTaskState)
@@ -157,6 +158,7 @@ describe('ActiveSession task polling', () => {
           activeToolName: null,
           activeThinkingId: null,
           pendingPermission: null,
+          pendingComputerUsePermission: null,
           tokenUsage: { input_tokens: 0, output_tokens: 0 },
           elapsedSeconds: 0,
           statusVerb: '',

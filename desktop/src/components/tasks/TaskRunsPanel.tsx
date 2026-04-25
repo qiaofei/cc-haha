@@ -12,7 +12,7 @@ function RunOutput({ run }: { run: TaskRun }) {
   // Show error prominently if present
   if (run.error) {
     return (
-      <div className="mt-2 p-2.5 rounded-[var(--radius-sm)] bg-red-50 border border-red-200 text-xs text-[var(--color-error)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+      <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-[var(--radius-sm)] border border-[var(--color-error)]/20 bg-[var(--color-error-container)]/28 p-2.5 text-xs text-[var(--color-error)]">
         {run.error}
       </div>
     )

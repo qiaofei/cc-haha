@@ -4,6 +4,23 @@ import type { SessionListItem, MessageEntry } from '../types/session'
 type SessionsResponse = { sessions: SessionListItem[]; total: number }
 type MessagesResponse = { messages: MessageEntry[] }
 type CreateSessionResponse = { sessionId: string }
+export type SessionRewindResponse = {
+  target: {
+    userMessageIndex: number
+    userMessageCount: number
+  }
+  conversation: {
+    messagesRemoved: number
+    removedMessageIds?: string[]
+  }
+  code: {
+    available: boolean
+    reason?: string
+    filesChanged: string[]
+    insertions: number
+    deletions: number
+  }
+}
 
 export type RecentProject = {
   projectPath: string
@@ -42,8 +59,9 @@ export const sessionsApi = {
     return api.patch<{ ok: true }>(`/api/sessions/${sessionId}`, { title })
   },
 
-  getRecentProjects() {
-    return api.get<{ projects: RecentProject[] }>('/api/sessions/recent-projects')
+  getRecentProjects(limit?: number) {
+    const query = typeof limit === 'number' ? `?limit=${limit}` : ''
+    return api.get<{ projects: RecentProject[] }>(`/api/sessions/recent-projects${query}`)
   },
 
   getGitInfo(sessionId: string) {
@@ -52,5 +70,11 @@ export const sessionsApi = {
 
   getSlashCommands(sessionId: string) {
     return api.get<{ commands: Array<{ name: string; description: string }> }>(`/api/sessions/${sessionId}/slash-commands`)
+  },
+
+  rewind(sessionId: string, body: { userMessageIndex: number; dryRun?: boolean }) {
+    return api.post<SessionRewindResponse>(`/api/sessions/${sessionId}/rewind`, body, {
+      timeout: 60_000,
+    })
   },
 }

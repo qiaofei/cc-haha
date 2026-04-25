@@ -9,7 +9,12 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { ProviderService } from './providerService.js'
 import { sessionService } from './sessionService.js'
+import {
+  buildClaudeCliArgs,
+  resolveClaudeCliLauncher,
+} from '../../utils/desktopBundledCli.js'
 
 type AttachmentRef = {
   type: 'file' | 'image'
@@ -43,6 +48,7 @@ type SessionStartOptions = {
   permissionMode?: string
   model?: string
   effort?: string
+  providerId?: string | null
 }
 
 export class ConversationStartupError extends Error {
@@ -63,6 +69,34 @@ export class ConversationStartupError extends Error {
 
 export class ConversationService {
   private sessions = new Map<string, SessionProcess>()
+  private providerService = new ProviderService()
+
+  private buildSessionCliArgs(
+    sessionId: string,
+    sdkUrl: string,
+    shouldResume: boolean,
+    options?: SessionStartOptions,
+  ): string[] {
+    const dangerousMode = process.env.CLAUDE_DANGEROUS_MODE === '1'
+    return this.resolveCliArgs([
+      '--print',
+      '--verbose',
+      '--sdk-url',
+      sdkUrl,
+      '--enable-auth-status',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
+      // Desktop chat depends on partial assistant deltas; without this the
+      // server only sees the completed assistant message at turn end.
+      '--include-partial-messages',
+      ...(shouldResume ? ['--resume', sessionId] : ['--session-id', sessionId]),
+      '--replay-user-messages',
+      ...this.getRuntimeArgs(options),
+      ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
+    ])
+  }
 
   async startSession(
     sessionId: string,
@@ -88,22 +122,12 @@ export class ConversationService {
       )
     }
 
-    const dangerousMode = process.env.CLAUDE_DANGEROUS_MODE === '1'
-    const args = this.resolveCliArgs([
-      '--print',
-      '--verbose',
-      '--sdk-url',
+    const args = this.buildSessionCliArgs(
+      sessionId,
       sdkUrl,
-      '--enable-auth-status',
-      '--input-format',
-      'stream-json',
-      '--output-format',
-      'stream-json',
-      ...(shouldResume ? ['--resume', sessionId] : ['--session-id', sessionId]),
-      '--replay-user-messages',
-      ...this.getRuntimeArgs(options),
-      ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
-    ])
+      shouldResume,
+      options,
+    )
 
     console.log(
       `[ConversationService] Starting CLI for ${sessionId}, cwd: ${workDir} (process.cwd()=${process.cwd()}, CALLER_DIR will be pinned to workDir)`,
@@ -119,7 +143,7 @@ export class ConversationService {
     // 工作目录就变成 `/`。把 CALLER_DIR / PWD 显式覆盖成 workDir，preload.ts
     // chdir 后落到正确目录。
     //
-    const childEnv = await this.buildChildEnv(workDir)
+    const childEnv = await this.buildChildEnv(workDir, sdkUrl, options)
 
     let proc: ReturnType<typeof Bun.spawn>
     try {
@@ -156,10 +180,7 @@ export class ConversationService {
     this.readErrorStream(sessionId, proc)
 
     proc.exited.then((code) => {
-      console.log(
-        `[ConversationService] CLI process for ${sessionId} exited with code ${code}`,
-      )
-      this.sessions.delete(sessionId)
+      this.handleProcessExit(sessionId, proc, code)
     })
 
     const STARTUP_GRACE_MS = 3000
@@ -211,6 +232,10 @@ export class ConversationService {
     }
   }
 
+  getRecentSdkMessages(sessionId: string): any[] {
+    return [...(this.sessions.get(sessionId)?.sdkMessages ?? [])]
+  }
+
   sendMessage(
     sessionId: string,
     content: string,
@@ -232,6 +257,7 @@ export class ConversationService {
     requestId: string,
     allowed: boolean,
     rule?: string,
+    updatedInput?: Record<string, unknown>,
   ): boolean {
     const session = this.sessions.get(sessionId)
     const pendingRequest = session?.pendingPermissionRequests.get(requestId)
@@ -247,7 +273,7 @@ export class ConversationService {
         response: allowed
           ? {
               behavior: 'allow',
-              updatedInput: {},
+              updatedInput: updatedInput ?? {},
               ...(rule === 'always' && pendingRequest
                 ? {
                     updatedPermissions: [
@@ -440,6 +466,21 @@ export class ConversationService {
     return true
   }
 
+  private handleProcessExit(
+    sessionId: string,
+    proc: SessionProcess['proc'],
+    code: number,
+  ): void {
+    console.log(
+      `[ConversationService] CLI process for ${sessionId} exited with code ${code}`,
+    )
+
+    const activeSession = this.sessions.get(sessionId)
+    if (activeSession?.proc === proc) {
+      this.sessions.delete(sessionId)
+    }
+  }
+
   private getPermissionArgs(
     mode: string | undefined,
     dangerousMode: boolean,
@@ -471,7 +512,11 @@ export class ConversationService {
     return args
   }
 
-  private async buildChildEnv(workDir: string): Promise<Record<string, string>> {
+  private async buildChildEnv(
+    workDir: string,
+    sdkUrl?: string,
+    options?: SessionStartOptions,
+  ): Promise<Record<string, string>> {
     // Provider isolation: when Desktop has its own provider config/index,
     // strip inherited provider env vars so the child CLI reads fresh values
     // from ~/.claude/cc-haha/settings.json instead of stale process.env.
@@ -491,27 +536,59 @@ export class ConversationService {
 
     const cleanEnv = { ...process.env }
     delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN
-    if (this.shouldStripInheritedProviderEnv()) {
+    if (this.shouldStripInheritedProviderEnv(options?.providerId)) {
       for (const key of PROVIDER_ENV_KEYS) {
         delete cleanEnv[key]
       }
     }
 
+    let desktopServerUrl: string | undefined
+    if (sdkUrl) {
+      try {
+        const parsed = new URL(sdkUrl)
+        desktopServerUrl = `http://${parsed.host}`
+      } catch {
+        desktopServerUrl = undefined
+      }
+    }
+
+    const explicitProviderEnv =
+      typeof options?.providerId === 'string'
+        ? await this.providerService.getProviderRuntimeEnv(options.providerId)
+        : null
+
     return {
       ...cleanEnv,
       CLAUDE_CODE_ENABLE_TASKS: '1',
+      CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
       CALLER_DIR: workDir,
       PWD: workDir,
+      ...(sdkUrl
+        ? { CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID: 'com.claude-code-haha.desktop' }
+        : {}),
+      ...(desktopServerUrl
+        ? { CC_HAHA_DESKTOP_SERVER_URL: desktopServerUrl }
+        : {}),
+      ...(sdkUrl
+        ? {
+            CC_HAHA_DESKTOP_AWAIT_MCP: '1',
+            CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS: '5000',
+          }
+        : {}),
       // Tell the CLI entrypoint to skip project .env loading. Provider env
       // should come from Desktop-managed config or inherited launch env, not
       // be reintroduced from the repo's .env file.
       CC_HAHA_SKIP_DOTENV: '1',
+      ...(explicitProviderEnv
+        ? { CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1' }
+        : {}),
       // "官方" 模式 (cc-haha/settings.json 没 provider env) 下,把 CLI 标记为
       // managed-OAuth,让它忽略外部 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
       // 残留、只走用户 /login 的 OAuth token。自定义 provider 模式绝不能设,
       // 否则 CLI 会忽略 provider 的 AUTH_TOKEN、错误地走 OAuth 打到第三方
       // endpoint。详见 src/utils/auth.ts isManagedOAuthContext()。
-      ...(this.shouldMarkManagedOAuth()
+      ...(explicitProviderEnv ?? {}),
+      ...(this.shouldMarkManagedOAuth(options?.providerId)
         ? await this.buildOfficialOAuthEnv()
         : {}),
     }
@@ -545,7 +622,11 @@ export class ConversationService {
     return env
   }
 
-  private shouldStripInheritedProviderEnv(): boolean {
+  private shouldStripInheritedProviderEnv(providerId?: string | null): boolean {
+    if (providerId !== undefined) {
+      return true
+    }
+
     const configDir =
       process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
     const ccHahaDir = path.join(configDir, 'cc-haha')
@@ -583,7 +664,14 @@ export class ConversationService {
    * 默认 (读不到 settings.json) 按"官方"处理 — 即使用户从未用过 cc-haha
    * provider 管理,也希望官方 OAuth 能正常工作。
    */
-  private shouldMarkManagedOAuth(): boolean {
+  private shouldMarkManagedOAuth(providerId?: string | null): boolean {
+    if (providerId === null) {
+      return true
+    }
+    if (typeof providerId === 'string') {
+      return false
+    }
+
     const configDir =
       process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
     const settingsPath = path.join(configDir, 'cc-haha', 'settings.json')
@@ -605,38 +693,18 @@ export class ConversationService {
     }
   }
 
-  private resolveBundledCliPath(): string | null {
-    // 桌面端 P0+P2 之后只有一个合并的 sidecar 二进制 —— `claude-sidecar`，
-    // 它通过第一个 positional 参数 (server / cli) 选模式。当前进程要么
-    // 已经是这个 sidecar 自己（spawn 子 CLI 时复用同一个文件），要么是
-    // 旧 dev 模式下走 bin/claude-haha。这里支持两种命名：
-    //   - 桌面端 prod build：进程名 claude-sidecar*
-    //   - 旧 server-only 二进制（向后兼容）：claude-server*
-    const execPath = process.execPath
-    const execName = path.basename(execPath)
-
-    if (execName.startsWith('claude-sidecar')) {
-      // 复用同一个二进制，调用 cli 模式
-      return execPath
-    }
-
-    if (execName.startsWith('claude-server')) {
-      const bundledCliPath = path.join(
-        path.dirname(execPath),
-        execName.replace(/^claude-server/, 'claude-cli'),
-      )
-      return fs.existsSync(bundledCliPath) ? bundledCliPath : null
-    }
-
-    return null
-  }
-
   private resolveCliArgs(baseArgs: string[]): string[] {
-    const cliCommand = process.env.CLAUDE_CLI_PATH || this.resolveBundledCliPath()
-    if (!cliCommand) {
+    const launcher = resolveClaudeCliLauncher({
+      cliPath: process.env.CLAUDE_CLI_PATH,
+      execPath: process.execPath,
+    })
+
+    if (!launcher) {
       if (process.platform === 'win32') {
         return [
           process.execPath,
+          '--preload',
+          path.resolve(import.meta.dir, '../../../preload.ts'),
           path.resolve(import.meta.dir, '../../entrypoints/cli.tsx'),
           ...baseArgs,
         ]
@@ -644,35 +712,7 @@ export class ConversationService {
       return [path.resolve(import.meta.dir, '../../../bin/claude-haha'), ...baseArgs]
     }
 
-    if (/\.(?:[cm]?[jt]s|tsx?)$/i.test(cliCommand)) {
-      return ['bun', cliCommand, ...baseArgs]
-    }
-
-    const cliBaseName = path.basename(cliCommand)
-
-    // 合并 sidecar 模式：第一个参数必须是 'cli'，后面跟 --app-root 透传
-    if (cliBaseName.startsWith('claude-sidecar')) {
-      const args = ['cli', ...baseArgs]
-      if (process.env.CLAUDE_APP_ROOT) {
-        return [cliCommand, 'cli', '--app-root', process.env.CLAUDE_APP_ROOT, ...baseArgs]
-      }
-      return [cliCommand, ...args]
-    }
-
-    // 旧两段式 sidecar：claude-cli 二进制需要 --app-root
-    if (
-      process.env.CLAUDE_APP_ROOT &&
-      cliBaseName.startsWith('claude-cli')
-    ) {
-      return [
-        cliCommand,
-        '--app-root',
-        process.env.CLAUDE_APP_ROOT,
-        ...baseArgs,
-      ]
-    }
-
-    return [cliCommand, ...baseArgs]
+    return buildClaudeCliArgs(launcher, baseArgs, process.env.CLAUDE_APP_ROOT)
   }
 
   private clearStaleLock(sessionId: string): boolean {

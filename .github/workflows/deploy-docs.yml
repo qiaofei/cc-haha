@@ -6,6 +6,7 @@ on:
     paths:
       - 'docs/**'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
 
@@ -30,7 +31,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Setup Pages

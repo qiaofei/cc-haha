@@ -3,13 +3,13 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useProviderStore } from '../stores/providerStore'
 import { useTranslation } from '../i18n'
 import { Modal } from '../components/shared/Modal'
+import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 import { Input } from '../components/shared/Input'
 import { Button } from '../components/shared/Button'
-import type { PermissionMode, EffortLevel } from '../types/settings'
+import type { PermissionMode, EffortLevel, ThemeMode } from '../types/settings'
 import type { Locale } from '../i18n'
-import { PROVIDER_PRESETS } from '../config/providerPresets'
-import type { ProviderPreset } from '../config/providerPresets'
 import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, ApiFormat } from '../types/provider'
+import type { ProviderPreset } from '../types/providerPreset'
 import { AdapterSettings } from './AdapterSettings'
 import { useAgentStore } from '../stores/agentStore'
 import { useSessionStore } from '../stores/sessionStore'
@@ -18,10 +18,16 @@ import { MarkdownRenderer } from '../components/markdown/MarkdownRenderer'
 import { useSkillStore } from '../stores/skillStore'
 import { SkillList } from '../components/skills/SkillList'
 import { SkillDetail } from '../components/skills/SkillDetail'
+import { usePluginStore } from '../stores/pluginStore'
+import { PluginList } from '../components/plugins/PluginList'
+import { PluginDetail } from '../components/plugins/PluginDetail'
 import { ComputerUseSettings } from './ComputerUseSettings'
+import { McpSettings } from './McpSettings'
+import { TerminalSettings } from './TerminalSettings'
 import { useUIStore, type SettingsTab } from '../stores/uiStore'
 import { ClaudeOfficialLogin } from '../components/settings/ClaudeOfficialLogin'
 import { useUpdateStore } from '../stores/updateStore'
+import { formatBytes } from '../lib/formatBytes'
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('providers')
@@ -44,8 +50,11 @@ export function Settings() {
             <TabButton icon="shield" label={t('settings.tab.permissions')} active={activeTab === 'permissions'} onClick={() => setActiveTab('permissions')} />
             <TabButton icon="tune" label={t('settings.tab.general')} active={activeTab === 'general'} onClick={() => setActiveTab('general')} />
             <TabButton icon="chat" label={t('settings.tab.adapters')} active={activeTab === 'adapters'} onClick={() => setActiveTab('adapters')} />
+            <TabButton icon="terminal" label={t('settings.tab.terminal')} active={activeTab === 'terminal'} onClick={() => setActiveTab('terminal')} />
+            <TabButton icon="dns" label={t('settings.tab.mcp')} active={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')} />
             <TabButton icon="smart_toy" label={t('settings.tab.agents')} active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} />
             <TabButton icon="auto_awesome" label={t('settings.tab.skills')} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} />
+            <TabButton icon="extension" label={t('settings.tab.plugins')} active={activeTab === 'plugins'} onClick={() => setActiveTab('plugins')} />
             <TabButton icon="mouse" label={t('settings.tab.computerUse')} active={activeTab === 'computerUse'} onClick={() => setActiveTab('computerUse')} />
           </div>
           <div className="border-t border-[var(--color-border)]/40 pt-1">
@@ -59,8 +68,11 @@ export function Settings() {
           {activeTab === 'permissions' && <PermissionSettings />}
           {activeTab === 'general' && <GeneralSettings />}
           {activeTab === 'adapters' && <AdapterSettings />}
+          {activeTab === 'terminal' && <TerminalSettings />}
+          {activeTab === 'mcp' && <McpSettings />}
           {activeTab === 'agents' && <AgentsSettings />}
           {activeTab === 'skills' && <SkillSettings />}
+          {activeTab === 'plugins' && <PluginSettings />}
           {activeTab === 'computerUse' && <ComputerUseSettings />}
           {activeTab === 'about' && <AboutSettings />}
         </div>
@@ -88,19 +100,53 @@ function TabButton({ icon, label, active, onClick }: { icon: string; label: stri
 // ─── Provider Settings ──────────────────────────────────────
 
 function ProviderSettings() {
-  const { providers, activeId, isLoading, fetchProviders, deleteProvider, activateProvider, activateOfficial, testProvider } = useProviderStore()
+  const {
+    providers,
+    activeId,
+    presets,
+    isLoading,
+    isPresetsLoading,
+    fetchProviders,
+    fetchPresets,
+    deleteProvider,
+    activateProvider,
+    activateOfficial,
+    testProvider,
+  } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const t = useTranslation()
   const [editingProvider, setEditingProvider] = useState<SavedProvider | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
+  const [isDeletingProvider, setIsDeletingProvider] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, { loading: boolean; result?: ProviderTestResult }>>({})
 
-  useEffect(() => { fetchProviders() }, [fetchProviders])
+  useEffect(() => {
+    void fetchProviders()
+    void fetchPresets()
+  }, [fetchPresets, fetchProviders])
+
+  const presetMap = useMemo(
+    () => new Map(presets.map((preset) => [preset.id, preset])),
+    [presets],
+  )
 
   const handleDelete = async (provider: SavedProvider) => {
     if (activeId === provider.id) return
-    if (!window.confirm(t('settings.providers.confirmDelete', { name: provider.name }))) return
-    await deleteProvider(provider.id).catch(console.error)
+    setPendingDeleteProvider(provider)
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteProvider) return
+    setIsDeletingProvider(true)
+    try {
+      await deleteProvider(pendingDeleteProvider.id)
+      setPendingDeleteProvider(null)
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setIsDeletingProvider(false)
+    }
   }
 
   const handleTest = async (provider: SavedProvider) => {
@@ -132,7 +178,7 @@ function ProviderSettings() {
           <h2 className="text-base font-semibold text-[var(--color-text-primary)]">{t('settings.providers.title')}</h2>
           <p className="text-sm text-[var(--color-text-tertiary)] mt-0.5">{t('settings.providers.description')}</p>
         </div>
-        <Button size="sm" onClick={() => setShowCreateModal(true)}>
+        <Button size="sm" onClick={() => setShowCreateModal(true)} disabled={isPresetsLoading || presets.length === 0}>
           <span className="material-symbols-outlined text-[16px]">add</span>
           {t('settings.providers.addProvider')}
         </Button>
@@ -142,7 +188,7 @@ function ProviderSettings() {
       <div
         className={`relative flex flex-col rounded-xl border transition-all mb-2 ${
           isOfficialActive
-            ? 'border-[var(--color-brand)] bg-[var(--color-primary-fixed)]'
+            ? 'border-[var(--color-brand)] bg-[var(--color-surface-container)] shadow-[var(--shadow-focus-ring)]'
             : 'border-[var(--color-border)] hover:border-[var(--color-border-focus)] cursor-pointer'
         }`}
       >
@@ -155,7 +201,7 @@ function ProviderSettings() {
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.officialName')}</span>
               {isOfficialActive && (
-                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--color-brand)] text-white leading-none">{t('common.active')}</span>
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('settings.providers.default')}</span>
               )}
             </div>
             <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">{t('settings.providers.officialDesc')}</div>
@@ -179,13 +225,13 @@ function ProviderSettings() {
           {providers.map((provider) => {
             const isActive = activeId === provider.id
             const test = testResults[provider.id]
-            const preset = PROVIDER_PRESETS.find((p) => p.id === provider.presetId)
+            const preset = presetMap.get(provider.presetId)
             return (
               <div
                 key={provider.id}
                 className={`relative flex items-center gap-4 px-4 py-3.5 rounded-xl border transition-all group ${
                   isActive
-                    ? 'border-[var(--color-brand)] bg-[var(--color-primary-fixed)]'
+                    ? 'border-[var(--color-brand)] bg-[var(--color-surface-container)] shadow-[var(--shadow-focus-ring)]'
                     : 'border-[var(--color-border)] hover:border-[var(--color-border-focus)]'
                 }`}
               >
@@ -202,7 +248,7 @@ function ProviderSettings() {
                       </span>
                     )}
                     {isActive && (
-                      <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--color-brand)] text-white leading-none">{t('common.active')}</span>
+                      <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('settings.providers.default')}</span>
                     )}
                   </div>
                   <div className="text-xs text-[var(--color-text-tertiary)] truncate mt-0.5">
@@ -227,7 +273,7 @@ function ProviderSettings() {
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                   {!isActive && (
-                    <Button variant="ghost" size="sm" onClick={() => handleActivate(provider.id)}>{t('settings.providers.activate')}</Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleActivate(provider.id)}>{t('settings.providers.setDefault')}</Button>
                   )}
                   <Button variant="ghost" size="sm" onClick={() => handleTest(provider)} loading={test?.loading}>{t('settings.providers.test')}</Button>
                   <Button variant="ghost" size="sm" onClick={() => setEditingProvider(provider)}>{t('settings.providers.edit')}</Button>
@@ -243,13 +289,28 @@ function ProviderSettings() {
 
       {/* Create Modal — conditionally rendered so state resets on close */}
       {showCreateModal && (
-        <ProviderFormModal open={true} onClose={() => setShowCreateModal(false)} mode="create" />
+        <ProviderFormModal open={true} onClose={() => setShowCreateModal(false)} mode="create" presets={presets} />
       )}
 
       {/* Edit Modal */}
       {editingProvider && (
-        <ProviderFormModal key={editingProvider.id} open={true} onClose={() => setEditingProvider(null)} mode="edit" provider={editingProvider} />
+        <ProviderFormModal key={editingProvider.id} open={true} onClose={() => setEditingProvider(null)} mode="edit" provider={editingProvider} presets={presets} />
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteProvider !== null}
+        onClose={() => {
+          if (isDeletingProvider) return
+          setPendingDeleteProvider(null)
+        }}
+        onConfirm={confirmDelete}
+        title={t('common.delete')}
+        body={pendingDeleteProvider ? t('settings.providers.confirmDelete', { name: pendingDeleteProvider.name }) : ''}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant="danger"
+        loading={isDeletingProvider}
+      />
     </div>
   )
 }
@@ -261,6 +322,7 @@ type ProviderFormProps = {
   onClose: () => void
   mode: 'create' | 'edit'
   provider?: SavedProvider
+  presets: ProviderPreset[]
 }
 
 function requirePreset(preset: ProviderPreset | undefined): ProviderPreset {
@@ -270,15 +332,27 @@ function requirePreset(preset: ProviderPreset | undefined): ProviderPreset {
   return preset
 }
 
-function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps) {
+function buildFallbackPreset(provider?: SavedProvider): ProviderPreset {
+  return {
+    id: provider?.presetId ?? 'custom',
+    name: provider?.name ?? 'Custom',
+    baseUrl: provider?.baseUrl ?? '',
+    apiFormat: provider?.apiFormat ?? 'anthropic',
+    defaultModels: provider?.models ?? { main: '', haiku: '', sonnet: '', opus: '' },
+    needsApiKey: true,
+    websiteUrl: '',
+  }
+}
+
+function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderFormProps) {
   const { createProvider, updateProvider, testConfig } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const t = useTranslation()
 
-  const availablePresets = PROVIDER_PRESETS.filter((p) => p.id !== 'official')
-  const fallbackPreset = requirePreset(
-    availablePresets[availablePresets.length - 1] ?? PROVIDER_PRESETS[0],
-  )
+  const availablePresets = presets.filter((p) => p.id !== 'official')
+  const fallbackPreset = provider
+    ? buildFallbackPreset(provider)
+    : requirePreset(availablePresets[availablePresets.length - 1])
   const initialPreset = requirePreset(
     provider
       ? availablePresets.find((p) => p.id === provider.presetId) ?? fallbackPreset
@@ -306,11 +380,12 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
       jsonPastedRef.current = false
       return
     }
-    import('../api/settings').then(({ settingsApi }) => {
-      settingsApi.getUser().then((settings) => {
+    import('../api/providers').then(({ providersApi }) => {
+      providersApi.getSettings().then((settings) => {
         const needsProxy = apiFormat !== 'anthropic'
         const merged = {
           ...settings,
+          skipWebFetchPreflight: settings.skipWebFetchPreflight ?? true,
           env: {
             ...((settings.env as Record<string, string>) || {}),
             ANTHROPIC_BASE_URL: needsProxy ? 'http://127.0.0.1:3456/proxy' : baseUrl,
@@ -345,12 +420,13 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
     if (!canSubmit) return
     setIsSubmitting(true)
     try {
-      // Write the edited settings.json first (for all presets including official)
+      // Write the edited cc-haha settings.json first so provider-specific model
+      // settings never conflict with the user's global ~/.claude/settings.json.
       if (settingsJson.trim()) {
         try {
           const parsed = JSON.parse(settingsJson)
-          const { settingsApi } = await import('../api/settings')
-          await settingsApi.updateUser(parsed)
+          const { providersApi } = await import('../api/providers')
+          await providersApi.updateSettings(parsed)
         } catch {
           // JSON validation already prevents this
         }
@@ -437,8 +513,8 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
                   onClick={() => handlePresetChange(preset)}
                   className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-all ${
                     selectedPreset.id === preset.id
-                      ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
-                      : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-focus)]'
+                      ? 'border-[var(--color-brand)] bg-[var(--color-surface-container-high)] text-[var(--color-brand)] shadow-[var(--shadow-focus-ring)]'
+                      : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]'
                   }`}
                 >
                   {preset.name}
@@ -621,7 +697,7 @@ function PermissionSettings() {
               onClick={() => setPermissionMode(mode)}
               className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left ${
                 isSelected
-                  ? 'border-[var(--color-brand)] bg-[var(--color-primary-fixed)]'
+                  ? 'border-[var(--color-brand)] bg-[var(--color-surface-container)] shadow-[var(--shadow-focus-ring)]'
                   : 'border-[var(--color-border)] hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]'
               }`}
             >
@@ -646,7 +722,16 @@ function PermissionSettings() {
 // ─── General Settings ──────────────────────────────────────
 
 function GeneralSettings() {
-  const { effortLevel, setEffort, locale, setLocale } = useSettingsStore()
+  const {
+    effortLevel,
+    setEffort,
+    locale,
+    setLocale,
+    theme,
+    setTheme,
+    skipWebFetchPreflight,
+    setSkipWebFetchPreflight,
+  } = useSettingsStore()
   const t = useTranslation()
 
   const EFFORT_LABELS: Record<EffortLevel, string> = {
@@ -661,8 +746,32 @@ function GeneralSettings() {
     { value: 'zh', label: '中文' },
   ]
 
+  const THEMES: Array<{ value: ThemeMode; label: string }> = [
+    { value: 'light', label: t('settings.general.appearance.light') },
+    { value: 'dark', label: t('settings.general.appearance.dark') },
+  ]
+
   return (
     <div className="max-w-xl">
+      {/* Appearance selector */}
+      <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">{t('settings.general.appearanceTitle')}</h2>
+      <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.appearanceDescription')}</p>
+      <div className="flex gap-2 mb-8">
+        {THEMES.map(({ value, label }) => (
+          <button
+            key={value}
+            onClick={() => void setTheme(value)}
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all ${
+              theme === value
+                ? 'bg-[image:var(--gradient-btn-primary)] text-[var(--color-btn-primary-fg)] border-transparent shadow-[var(--shadow-button-primary)]'
+                : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Language selector */}
       <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">{t('settings.general.languageTitle')}</h2>
       <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.languageDescription')}</p>
@@ -700,6 +809,28 @@ function GeneralSettings() {
           </button>
         ))}
       </div>
+
+      <div className="mt-8">
+        <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">{t('settings.general.webFetchPreflightTitle')}</h2>
+        <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.webFetchPreflightDescription')}</p>
+        <label className="flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-3 cursor-pointer hover:border-[var(--color-border-focus)] transition-colors">
+          <input
+            type="checkbox"
+            aria-label={t('settings.general.webFetchPreflightEnabled')}
+            checked={skipWebFetchPreflight}
+            onChange={(e) => void setSkipWebFetchPreflight(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+          />
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">
+              {t('settings.general.webFetchPreflightEnabled')}
+            </div>
+            <div className="text-xs text-[var(--color-text-tertiary)] mt-1 leading-5">
+              {t('settings.general.webFetchPreflightHint')}
+            </div>
+          </div>
+        </label>
+      </div>
     </div>
   )
 }
@@ -734,6 +865,7 @@ function AgentsSettings() {
     isLoading,
     error,
     selectedAgent,
+    selectedAgentReturnTab,
     fetchAgents,
     selectAgent,
   } = useAgentStore()
@@ -758,10 +890,18 @@ function AgentsSettings() {
 
   const sourceCount = AGENT_SOURCE_ORDER.filter((source) => (groupedAgents[source] ?? []).length > 0).length
 
+  const handleAgentBack = () => {
+    const returnTab = selectedAgentReturnTab
+    selectAgent(null)
+    if (returnTab === 'plugins') {
+      useUIStore.getState().setPendingSettingsTab('plugins')
+    }
+  }
+
   if (selectedAgent) {
     return (
       <div className="w-full min-w-0">
-        <AgentDetailView agent={selectedAgent} onBack={() => selectAgent(null)} />
+        <AgentDetailView agent={selectedAgent} onBack={handleAgentBack} />
       </div>
     )
   }
@@ -870,7 +1010,7 @@ function AgentsSettings() {
                     {group.map((agent) => (
                       <button
                         key={`${agent.source}-${agent.agentType}`}
-                        onClick={() => selectAgent(agent)}
+                        onClick={() => selectAgent(agent, 'agents')}
                         className="group rounded-xl border border-transparent px-3 py-3 text-left transition-all hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                       >
                         <div className="flex items-start gap-3">
@@ -1206,6 +1346,31 @@ function SkillSettings() {
   )
 }
 
+function PluginSettings() {
+  const selectedPlugin = usePluginStore((s) => s.selectedPlugin)
+  const t = useTranslation()
+
+  if (selectedPlugin) {
+    return (
+      <div className="w-full min-w-0">
+        <PluginDetail />
+      </div>
+    )
+  }
+
+  return (
+    <div className="w-full min-w-0">
+      <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+        {t('settings.plugins.title')}
+      </h2>
+      <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
+        {t('settings.plugins.description')}
+      </p>
+      <PluginList />
+    </div>
+  )
+}
+
 // ─── About Settings ──────────────────────────────────────
 
 const GITHUB_REPO = 'https://github.com/NanmiCoder/cc-haha'
@@ -1223,6 +1388,8 @@ function AboutSettings() {
   const availableVersion = useUpdateStore((s) => s.availableVersion)
   const releaseNotes = useUpdateStore((s) => s.releaseNotes)
   const progressPercent = useUpdateStore((s) => s.progressPercent)
+  const downloadedBytes = useUpdateStore((s) => s.downloadedBytes)
+  const totalBytes = useUpdateStore((s) => s.totalBytes)
   const error = useUpdateStore((s) => s.error)
   const checkedAt = useUpdateStore((s) => s.checkedAt)
   const checkForUpdates = useUpdateStore((s) => s.checkForUpdates)
@@ -1230,7 +1397,20 @@ function AboutSettings() {
   const initialize = useUpdateStore((s) => s.initialize)
 
   useEffect(() => {
-    import('@tauri-apps/api/app').then((mod) => mod.getVersion()).then(setVersion).catch(() => setVersion('0.1.0'))
+    let cancelled = false
+
+    import('@tauri-apps/api/app')
+      .then((mod) => mod.getVersion())
+      .then((value) => {
+        if (!cancelled) setVersion(value)
+      })
+      .catch(() => {
+        if (!cancelled) setVersion('0.1.0')
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -1251,11 +1431,15 @@ function AboutSettings() {
         })
       : null
 
+  const hasKnownProgress = typeof totalBytes === 'number' && totalBytes > 0
+  const downloadedText = formatBytes(downloadedBytes)
   const updateDescription =
     updateStatus === 'checking'
       ? t('update.checking')
       : updateStatus === 'downloading'
-        ? t('update.progress', { progress: String(progressPercent) })
+        ? hasKnownProgress
+          ? t('update.progress', { progress: String(progressPercent) })
+          : t('update.progressBytes', { downloaded: downloadedText })
         : updateStatus === 'restarting'
           ? t('update.restarting')
           : updateStatus === 'available' && availableVersion
@@ -1269,7 +1453,7 @@ function AboutSettings() {
   return (
     <div className="w-full min-w-0 max-w-lg mx-auto flex flex-col items-center py-6">
       {/* Logo + App Name + Version */}
-      <img src="/app-icon.jpg" alt="Claude Code Haha" className="w-20 h-20 rounded-2xl shadow-md mb-4" />
+      <img src="/app-icon.png" alt="Claude Code Haha" className="w-20 h-20 mb-4" />
       <h1 className="text-xl font-bold text-[var(--color-text-primary)]">Claude Code Haha</h1>
       {version && (
         <span className="text-xs text-[var(--color-text-tertiary)] mt-1">{t('settings.about.version')} {version}</span>
@@ -1344,22 +1528,33 @@ function AboutSettings() {
           {(updateStatus === 'downloading' || updateStatus === 'restarting') && (
             <div className="mt-3">
               <div className="h-1.5 bg-[var(--color-surface-container-low)] rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-[var(--color-text-accent)] transition-all duration-300"
-                  style={{ width: `${Math.min(progressPercent, 100)}%` }}
-                />
+                {hasKnownProgress || updateStatus === 'restarting' ? (
+                  <div
+                    className="h-full bg-[var(--color-text-accent)] transition-all duration-300"
+                    style={{ width: `${Math.min(progressPercent, 100)}%` }}
+                  />
+                ) : (
+                  <div className="h-full w-1/3 rounded-full bg-[var(--color-text-accent)]/75 animate-pulse" />
+                )}
               </div>
+              {!hasKnownProgress && updateStatus === 'downloading' && downloadedBytes > 0 && (
+                <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                  {downloadedText}
+                </p>
+              )}
             </div>
           )}
 
           {releaseNotes && availableVersion && (
-            <div className="mt-3 rounded-lg bg-[var(--color-surface-container-low)] px-3 py-2">
+            <div className="mt-3 rounded-lg bg-[var(--color-surface-container-low)] px-3 py-3">
               <div className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
                 {t('update.releaseNotes')}
               </div>
-              <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)] whitespace-pre-wrap">
-                {releaseNotes}
-              </p>
+              <MarkdownRenderer
+                content={releaseNotes}
+                variant="document"
+                className="mt-2 text-[13px] leading-6 text-[var(--color-text-secondary)] [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_p]:text-[13px] [&_p]:leading-6"
+              />
             </div>
           )}
 

@@ -1,21 +1,30 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { skillsApi } from '../api/skills'
 import { useTranslation } from '../i18n'
 import { useSessionStore } from '../stores/sessionStore'
 import { useChatStore } from '../stores/chatStore'
+import { useProviderStore } from '../stores/providerStore'
+import { useSessionRuntimeStore, DRAFT_RUNTIME_SELECTION_KEY } from '../stores/sessionRuntimeStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { useUIStore } from '../stores/uiStore'
-import { useTabStore } from '../stores/tabStore'
+import { SETTINGS_TAB_ID, useTabStore } from '../stores/tabStore'
+import { OFFICIAL_DEFAULT_MODEL_ID } from '../constants/modelCatalog'
 import { DirectoryPicker } from '../components/shared/DirectoryPicker'
 import { PermissionModeSelector } from '../components/controls/PermissionModeSelector'
 import { ModelSelector } from '../components/controls/ModelSelector'
 import { AttachmentGallery } from '../components/chat/AttachmentGallery'
 import { FileSearchMenu, type FileSearchMenuHandle } from '../components/chat/FileSearchMenu'
+import { LocalSlashCommandPanel, type LocalSlashCommandName } from '../components/chat/LocalSlashCommandPanel'
 import {
   FALLBACK_SLASH_COMMANDS,
   findSlashToken,
   insertSlashTrigger,
+  mergeSlashCommands,
   replaceSlashCommand,
+  resolveSlashUiAction,
 } from '../components/chat/composerUtils'
 import type { AttachmentRef } from '../types/chat'
+import type { SlashCommandOption } from '../components/chat/composerUtils'
 
 type Attachment = {
   id: string
@@ -35,10 +44,12 @@ export function EmptySession() {
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   const [slashMenuOpen, setSlashMenuOpen] = useState(false)
   const [fileSearchOpen, setFileSearchOpen] = useState(false)
+  const [localSlashPanel, setLocalSlashPanel] = useState<LocalSlashCommandName | null>(null)
   const [atFilter, setAtFilter] = useState('')
   const [atCursorPos, setAtCursorPos] = useState(-1)
   const [slashFilter, setSlashFilter] = useState('')
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
+  const [slashCommands, setSlashCommands] = useState<SlashCommandOption[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
@@ -47,6 +58,7 @@ export function EmptySession() {
   const slashItemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const createSession = useSessionStore((state) => state.createSession)
   const sendMessage = useChatStore((state) => state.sendMessage)
+  const setSessionRuntime = useChatStore((state) => state.setSessionRuntime)
   const connectToSession = useChatStore((state) => state.connectToSession)
   const setActiveView = useUIStore((state) => state.setActiveView)
   const addToast = useUIStore((state) => state.addToast)
@@ -83,6 +95,22 @@ export function EmptySession() {
   }, [slashMenuOpen])
 
   useEffect(() => {
+    if (!localSlashPanel) return
+    const handleClick = (event: MouseEvent) => {
+      if (
+        slashMenuRef.current &&
+        !slashMenuRef.current.contains(event.target as Node) &&
+        textareaRef.current &&
+        !textareaRef.current.contains(event.target as Node)
+      ) {
+        setLocalSlashPanel(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [localSlashPanel])
+
+  useEffect(() => {
     if (!fileSearchOpen) return
     const handleClick = (event: MouseEvent) => {
       const menu = document.getElementById('file-search-menu')
@@ -99,19 +127,56 @@ export function EmptySession() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [fileSearchOpen])
 
-  const filteredCommands = FALLBACK_SLASH_COMMANDS.filter((command) => {
-    if (!slashFilter) return true
+  useEffect(() => {
+    let cancelled = false
+
+    skillsApi.list(workDir || undefined)
+      .then(({ skills }) => {
+        if (cancelled) return
+        setSlashCommands(
+          skills
+            .filter((skill) => skill.userInvocable)
+            .map((skill) => ({
+              name: skill.name,
+              description: skill.description,
+            })),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSlashCommands([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [workDir])
+
+  const filteredCommands = useMemo(() => {
+    const source = mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS)
+    if (!slashFilter) return source
     const lower = slashFilter.toLowerCase()
-    return command.name.toLowerCase().includes(lower) || command.description.toLowerCase().includes(lower)
-  })
+    return source.filter((command) => (
+      command.name.toLowerCase().includes(lower) ||
+      command.description.toLowerCase().includes(lower)
+    ))
+  }, [slashCommands, slashFilter])
+
+  const exactSlashCommand = useMemo(() => {
+    const normalized = slashFilter.trim().toLowerCase()
+    if (!normalized) return null
+    return filteredCommands.find((command) => command.name.toLowerCase() === normalized) ?? null
+  }, [filteredCommands, slashFilter])
 
   useEffect(() => {
     setSlashSelectedIndex(0)
   }, [slashFilter])
 
   useEffect(() => {
-    if (slashMenuOpen && slashItemRefs.current[slashSelectedIndex]) {
-      slashItemRefs.current[slashSelectedIndex]?.scrollIntoView({ block: 'nearest' })
+    const activeItem = slashMenuOpen ? slashItemRefs.current[slashSelectedIndex] : null
+    if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+      activeItem.scrollIntoView({ block: 'nearest' })
     }
   }, [slashMenuOpen, slashSelectedIndex])
 
@@ -119,12 +184,56 @@ export function EmptySession() {
     const text = input.trim()
     if ((!text && attachments.length === 0) || isSubmitting) return
 
+    const slashUiAction = text.startsWith('/') ? resolveSlashUiAction(text.slice(1)) : null
+    if (slashUiAction?.type === 'panel') {
+      setLocalSlashPanel(slashUiAction.command as LocalSlashCommandName)
+      setInput('')
+      setSlashMenuOpen(false)
+      setFileSearchOpen(false)
+      setPlusMenuOpen(false)
+      return
+    }
+
+    if (slashUiAction?.type === 'settings') {
+      useUIStore.getState().setPendingSettingsTab(slashUiAction.tab)
+      useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings')
+      setInput('')
+      setSlashMenuOpen(false)
+      setFileSearchOpen(false)
+      setPlusMenuOpen(false)
+      return
+    }
+
     setIsSubmitting(true)
     try {
+      const settings = useSettingsStore.getState()
+      let providerState = useProviderStore.getState()
+      if (
+        settings.activeProviderName &&
+        providerState.providers.length === 0 &&
+        !providerState.isLoading
+      ) {
+        await providerState.fetchProviders()
+        providerState = useProviderStore.getState()
+      }
+      const inferredProviderId = providerState.activeId ?? (
+        settings.activeProviderName
+          ? providerState.providers.find((provider) => provider.name === settings.activeProviderName)?.id ?? null
+          : null
+      )
+      const draftSelection =
+        useSessionRuntimeStore.getState().selections[DRAFT_RUNTIME_SELECTION_KEY]
+        ?? {
+          providerId: inferredProviderId,
+          modelId: settings.currentModel?.id ?? OFFICIAL_DEFAULT_MODEL_ID,
+        }
       const sessionId = await createSession(workDir || undefined)
       setActiveView('code')
       useTabStore.getState().openTab(sessionId, 'New Session')
       connectToSession(sessionId)
+      useSessionRuntimeStore.getState().setSelection(sessionId, draftSelection)
+      useSessionRuntimeStore.getState().clearSelection(DRAFT_RUNTIME_SELECTION_KEY)
+      setSessionRuntime(sessionId, draftSelection)
       const attachmentPayload: AttachmentRef[] = attachments.map((attachment) => ({
         type: attachment.type,
         name: attachment.name,
@@ -215,6 +324,15 @@ export function EmptySession() {
         return
       }
       if (event.key === 'Enter' || event.key === 'Tab') {
+        if (
+          event.key === 'Enter' &&
+          exactSlashCommand &&
+          slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase()
+        ) {
+          event.preventDefault()
+          void handleSubmit()
+          return
+        }
         event.preventDefault()
         const selected = filteredCommands[slashSelectedIndex]
         if (selected) selectSlashCommand(selected.name)
@@ -336,14 +454,14 @@ export function EmptySession() {
   }
 
   return (
-    <div className="relative flex flex-1 flex-col overflow-hidden bg-[#FAF9F5]">
+    <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
       <div className="flex flex-1 flex-col items-center justify-center p-8 pb-32">
         <div className="flex max-w-md flex-col items-center text-center">
-          <img src="/app-icon.jpg" alt="Claude Code Haha" className="mb-6 h-24 w-24 rounded-[22px] shadow-[0_2px_12px_rgba(0,0,0,0.06)]" />
-          <h1 className="mb-2 text-3xl font-extrabold tracking-tight text-[#1B1C1A]" style={{ fontFamily: "'Manrope', sans-serif" }}>
+          <img src="/app-icon.png" alt="Claude Code Haha" className="mb-6 h-24 w-24" />
+          <h1 className="mb-2 text-3xl font-extrabold tracking-tight text-[var(--color-text-primary)]" style={{ fontFamily: 'var(--font-headline)' }}>
             {t('empty.title')}
           </h1>
-          <p className="mx-auto max-w-xs text-[#87736D]" style={{ fontFamily: "'Inter', sans-serif" }}>
+          <p className="mx-auto max-w-xs text-[var(--color-text-secondary)]" style={{ fontFamily: 'var(--font-body)' }}>
             {t('empty.subtitle')}
           </p>
         </div>
@@ -352,8 +470,7 @@ export function EmptySession() {
       <div className="absolute bottom-4 left-0 right-0 flex justify-center px-8">
         <div className="flex w-full max-w-3xl flex-col gap-2">
           <div
-            className="relative flex flex-col gap-3 rounded-xl border border-[#dac1ba]/15 bg-white p-4"
-            style={{ boxShadow: '0 4px 20px rgba(27, 28, 26, 0.04), 0 12px 40px rgba(27, 28, 26, 0.08)' }}
+            className="glass-panel relative flex flex-col gap-3 rounded-xl p-4"
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDrop}
           >
@@ -379,10 +496,20 @@ export function EmptySession() {
               />
             )}
 
+            {localSlashPanel && (
+              <div ref={slashMenuRef}>
+                <LocalSlashCommandPanel
+                  command={localSlashPanel}
+                  cwd={workDir || undefined}
+                  onClose={() => setLocalSlashPanel(null)}
+                />
+              </div>
+            )}
+
             {slashMenuOpen && filteredCommands.length > 0 && (
               <div
                 ref={slashMenuRef}
-                className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-xl border border-[#dac1ba]/20 bg-white shadow-[0_18px_48px_rgba(27,28,26,0.12)]"
+                className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-dropdown)]"
               >
                 <div className="max-h-[260px] overflow-y-auto py-1">
                   {filteredCommands.map((command, index) => (
@@ -391,12 +518,12 @@ export function EmptySession() {
                       ref={(el) => { slashItemRefs.current[index] = el }}
                       onClick={() => selectSlashCommand(command.name)}
                       onMouseEnter={() => setSlashSelectedIndex(index)}
-                      className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left transition-colors ${
-                        index === slashSelectedIndex ? 'bg-[#F4F4F0]' : 'hover:bg-[#F8F7F4]'
+                      className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors ${
+                        index === slashSelectedIndex ? 'bg-[var(--color-surface-hover)]' : 'hover:bg-[var(--color-surface-hover)]'
                       }`}
                     >
-                      <span className="text-sm font-semibold text-[#1B1C1A]">/{command.name}</span>
-                      <span className="truncate text-xs text-[#87736D]">{command.description}</span>
+                      <span className="shrink-0 text-sm font-semibold text-[var(--color-text-primary)]">/{command.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-tertiary)]">{command.description}</span>
                     </button>
                   ))}
                 </div>
@@ -414,41 +541,41 @@ export function EmptySession() {
                 onChange={(event) => handleInputChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                className="flex-1 resize-none border-none bg-transparent py-2 leading-relaxed text-[#1B1C1A] outline-none placeholder:text-[#87736D]/50"
-                style={{ fontFamily: "'Inter', sans-serif" }}
+                className="flex-1 resize-none border-none bg-transparent py-2 leading-relaxed text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]"
+                style={{ fontFamily: 'var(--font-body)' }}
                 placeholder={t('empty.placeholder')}
                 rows={2}
               />
             </div>
 
-            <div className="flex items-center justify-between border-t border-[#dac1ba]/10 pt-3">
+            <div className="flex items-center justify-between border-t border-[var(--color-border-separator)] pt-3">
               <div className="flex items-center gap-2">
                 <div ref={plusMenuRef} className="relative">
                   <button
                     onClick={() => setPlusMenuOpen((prev) => !prev)}
                     aria-label="Open composer tools"
-                    className="rounded-lg p-1.5 text-[#87736D] transition-colors hover:bg-[#F4F4F0]"
+                    className="rounded-lg p-1.5 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)]"
                   >
                     <span className="material-symbols-outlined text-[18px]">add</span>
                   </button>
 
                   {plusMenuOpen && (
-                    <div className="absolute bottom-full left-0 mb-2 w-[240px] rounded-xl border border-[#dac1ba]/20 bg-white py-1 shadow-[0_18px_48px_rgba(27,28,26,0.12)]">
+                    <div className="absolute bottom-full left-0 mb-2 w-[240px] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] py-1 shadow-[var(--shadow-dropdown)]">
                       <button
                         onClick={() => {
                           fileInputRef.current?.click()
                           setPlusMenuOpen(false)
                         }}
-                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[#1B1C1A] transition-colors hover:bg-[#F8F7F4]"
+                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
                       >
-                        <span className="material-symbols-outlined text-[18px] text-[#87736D]">attach_file</span>
+                        <span className="material-symbols-outlined text-[18px] text-[var(--color-text-secondary)]">attach_file</span>
                         {t('empty.addFiles')}
                       </button>
                       <button
                         onClick={insertSlashCommand}
-                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[#1B1C1A] transition-colors hover:bg-[#F8F7F4]"
+                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
                       >
-                        <span className="w-5 text-center text-[18px] font-bold text-[#87736D]">/</span>
+                        <span className="w-5 text-center text-[18px] font-bold text-[var(--color-text-secondary)]">/</span>
                         {t('empty.slashCommands')}
                       </button>
                     </div>
@@ -459,11 +586,11 @@ export function EmptySession() {
               </div>
 
               <div className="flex items-center gap-3">
-                <ModelSelector />
+                <ModelSelector runtimeKey={DRAFT_RUNTIME_SELECTION_KEY} disabled={isSubmitting} />
                 <button
                   onClick={handleSubmit}
                   disabled={(!input.trim() && attachments.length === 0) || isSubmitting}
-                  className="flex w-[112px] items-center justify-center gap-1 rounded-lg bg-[var(--color-brand)] px-3 py-1.5 text-xs font-semibold text-white transition-all hover:opacity-90 disabled:opacity-30"
+                  className="flex w-[112px] items-center justify-center gap-1 rounded-lg bg-[image:var(--gradient-btn-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--color-btn-primary-fg)] shadow-[var(--shadow-button-primary)] transition-all hover:brightness-105 disabled:opacity-30"
                 >
                   {t('common.run')}
                   <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
@@ -482,4 +609,3 @@ export function EmptySession() {
     </div>
   )
 }
-

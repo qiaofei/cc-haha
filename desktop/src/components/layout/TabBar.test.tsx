@@ -2,6 +2,15 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 
+const startDraggingMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
+const getCurrentWindowMock = vi.hoisted(() => vi.fn(() => ({
+  startDragging: startDraggingMock,
+})))
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: getCurrentWindowMock,
+}))
+
 vi.mock('../../i18n', () => ({
   useTranslation: () => (key: string) => {
     const translations: Record<string, string> = {
@@ -42,6 +51,13 @@ describe('TabBar', () => {
       value: ResizeObserverMock,
     })
 
+    Object.defineProperty(window, '__TAURI__', {
+      configurable: true,
+      value: {},
+    })
+
+    startDraggingMock.mockClear()
+    getCurrentWindowMock.mockClear()
     vi.resetModules()
   })
 
@@ -53,6 +69,8 @@ describe('TabBar', () => {
     useChatStore.setState({
       sessions: {},
     } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    delete (window as typeof window & { __TAURI__?: unknown }).__TAURI__
   })
 
   it('keeps the overflow button flush against window controls on Windows', async () => {
@@ -131,6 +149,188 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    expect(screen.getByTestId('tab-bar')).toHaveAttribute('data-tauri-drag-region')
+    expect(screen.getByTestId('tab-bar')).not.toHaveAttribute('data-tauri-drag-region')
+    expect(screen.getByTestId('tab-bar-drag-gutter')).toHaveAttribute('data-tauri-drag-region')
+  })
+
+  it('starts dragging when clicking the empty tab-bar gutter', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-1', title: 'Untitled Session', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-1',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    await waitFor(() => {
+      expect(getCurrentWindowMock).toHaveBeenCalled()
+    })
+
+    const scrollRegion = screen.getByTestId('tab-bar').querySelector('.overflow-x-hidden')
+    expect(scrollRegion).toBeInTheDocument()
+
+    fireEvent.mouseDown(scrollRegion!)
+
+    await waitFor(() => {
+      expect(startDraggingMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('does not start dragging when clicking a tab', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-1', title: 'Untitled Session', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-1',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    await waitFor(() => {
+      expect(getCurrentWindowMock).toHaveBeenCalled()
+    })
+
+    fireEvent.mouseDown(screen.getByText('Untitled Session'))
+
+    expect(startDraggingMock).not.toHaveBeenCalled()
+  })
+
+  it('reorders tabs via pointer drag', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-1', title: 'First Session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-2', title: 'Second Session', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-1',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    expect(screen.getByTestId('tab-bar').querySelector('.tab-bar-hit-area')).toBeInTheDocument()
+
+    const firstTab = screen.getByText('First Session').closest('.tab-bar-hit-area')
+    const secondTab = screen.getByText('Second Session').closest('.tab-bar-hit-area')
+
+    expect(firstTab).toBeTruthy()
+    expect(secondTab).toBeTruthy()
+
+    Object.defineProperty(firstTab!, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 0, width: 180 }),
+    })
+    Object.defineProperty(secondTab!, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 180, width: 180 }),
+    })
+
+    fireEvent.mouseDown(firstTab!, { button: 0, clientX: 20, clientY: 10 })
+    fireEvent.mouseMove(window, { clientX: 260, clientY: 10 })
+
+    expect(firstTab).toHaveAttribute('data-dragging', 'true')
+
+    fireEvent.mouseUp(window)
+
+    expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-2', 'tab-1'])
+  })
+
+  it('does not reorder on a simple click without dragging', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-1', title: 'First Session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-2', title: 'Second Session', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-1',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    const firstTab = screen.getByText('First Session').closest('.tab-bar-hit-area')
+    expect(firstTab).toBeTruthy()
+
+    fireEvent.mouseDown(firstTab!, { button: 0, clientX: 20, clientY: 10 })
+    fireEvent.mouseUp(window)
+    fireEvent.click(firstTab!)
+
+    expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-1', 'tab-2'])
+    expect(useTabStore.getState().activeTabId).toBe('tab-1')
+  })
+
+  it('closes a tab from the close button without activating drag behavior', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    const disconnectSession = vi.fn()
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-1', title: 'First Session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-2', title: 'Second Session', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-2',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    const firstTab = screen.getByText('First Session').closest('.tab-bar-hit-area')
+    const closeButton = screen.getByLabelText('Close First Session')
+
+    expect(firstTab).toHaveClass('group')
+
+    fireEvent.mouseDown(closeButton, { button: 0, clientX: 20, clientY: 10 })
+    fireEvent.click(closeButton)
+    fireEvent.mouseMove(window, { clientX: 260, clientY: 10 })
+    fireEvent.mouseUp(window)
+
+    expect(disconnectSession).toHaveBeenCalledWith('tab-1')
+    expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-2'])
+    expect(useTabStore.getState().activeTabId).toBe('tab-2')
   })
 })

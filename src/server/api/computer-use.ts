@@ -12,11 +12,19 @@ import { access, readFile, mkdir, writeFile } from 'fs/promises'
 import { createHash } from 'crypto'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import type { CuPermissionRequest } from '../../vendor/computer-use-mcp/types.js'
+import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
+import { detectPythonRuntime } from './computer-use-python.js'
+import { DEFAULT_DESKTOP_GRANT_FLAGS } from '../../utils/computerUse/preauthorizedConfig.js'
 // Embed helper scripts at compile time so they're available in bundled mode
 // @ts-ignore — Bun text import
 import MAC_HELPER_CONTENT from '../../../runtime/mac_helper.py' with { type: 'text' }
 // @ts-ignore — Bun text import
 import WIN_HELPER_CONTENT from '../../../runtime/win_helper.py' with { type: 'text' }
+// @ts-ignore — Bun text import
+import REQUIREMENTS_DARWIN from '../../../runtime/requirements.txt' with { type: 'text' }
+// @ts-ignore — Bun text import
+import REQUIREMENTS_WIN32 from '../../../runtime/requirements-win.txt' with { type: 'text' }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '../../..')
@@ -26,26 +34,17 @@ const runtimeStateRoot = join(claudeHome, '.runtime')
 const venvRoot = join(runtimeStateRoot, 'venv')
 const installStampPath = join(runtimeStateRoot, 'requirements.sha256')
 
-// Embedded content of requirements — platform-specific.
-const REQUIREMENTS_DARWIN = `mss>=10.1.0
-Pillow>=11.3.0
-pyautogui>=0.9.54
-pyobjc-core>=11.1
-pyobjc-framework-Cocoa>=11.1
-pyobjc-framework-Quartz>=11.1
-`
-
-const REQUIREMENTS_WIN32 = `mss>=10.1.0
-Pillow>=11.3.0
-pyautogui>=0.9.54
-pywin32>=306
-psutil>=5.9.0
-pyperclip>=1.8.2
-screeninfo>=0.8.1
-`
-
 const isWindows = process.platform === 'win32'
 const REQUIREMENTS_CONTENT = isWindows ? REQUIREMENTS_WIN32 : REQUIREMENTS_DARWIN
+
+function getPythonCommandEnv(): Record<string, string> | undefined {
+  if (!isWindows) return undefined
+  return {
+    ...process.env,
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUTF8: '1',
+  } as Record<string, string>
+}
 
 // 清华大学 PyPI 镜像，国内安装速度更快
 const PIP_INDEX_URL = 'https://pypi.tuna.tsinghua.edu.cn/simple/'
@@ -81,6 +80,7 @@ async function runCommand(
     const proc = Bun.spawn([cmd, ...args], {
       stdout: 'pipe',
       stderr: 'pipe',
+      env: getPythonCommandEnv(),
     })
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -137,26 +137,13 @@ async function checkStatus(): Promise<EnvStatus> {
   const platform = process.platform
   const supported = platform === 'darwin' || platform === 'win32'
 
-  // Check Python 3 — Windows may only have `python`, not `python3`
-  const pythonCmd = isWindows ? 'python' : 'python3'
-  const pythonResult = await runCommand(pythonCmd, ['--version'])
-  const pythonInstalled = pythonResult.ok
-  const pythonVersion = pythonInstalled
-    ? pythonResult.stdout.replace('Python ', '')
-    : null
-
-  let pythonPath: string | null = null
-  if (pythonInstalled) {
-    const whichCmd = isWindows ? 'where' : 'which'
-    const whichResult = await runCommand(whichCmd, [pythonCmd])
-    pythonPath = whichResult.ok ? whichResult.stdout.split('\n')[0] : null
-  }
-
   // Check venv — different paths on Windows vs Unix
   const venvPython = isWindows
     ? join(venvRoot, 'Scripts', 'python.exe')
     : join(venvRoot, 'bin', 'python3')
   const venvCreated = await pathExists(venvPython)
+
+  const pythonRuntime = await detectPythonRuntime(platform, runCommand, venvCreated ? venvPython : undefined)
 
   // Check dependencies — use the state dir copy
   const reqPath = getRequirementsPath()
@@ -198,7 +185,11 @@ async function checkStatus(): Promise<EnvStatus> {
   return {
     platform,
     supported,
-    python: { installed: pythonInstalled, version: pythonVersion, path: pythonPath },
+    python: {
+      installed: pythonRuntime.installed,
+      version: pythonRuntime.version,
+      path: pythonRuntime.path,
+    },
     venv: { created: venvCreated, path: venvRoot },
     dependencies: { installed: depsInstalled, requirementsFound: requirementsFound || true },
     permissions: { accessibility, screenRecording },
@@ -213,10 +204,18 @@ type SetupResult = {
 async function runSetup(): Promise<SetupResult> {
   const steps: SetupResult['steps'] = []
 
+  const venvPython = isWindows
+    ? join(venvRoot, 'Scripts', 'python.exe')
+    : join(venvRoot, 'bin', 'python3')
+  const venvExists = await pathExists(venvPython)
+
   // Step 1: Check python
-  const pythonCmd = isWindows ? 'python' : 'python3'
-  const pythonCheck = await runCommand(pythonCmd, ['--version'])
-  if (!pythonCheck.ok) {
+  const pythonRuntime = await detectPythonRuntime(
+    process.platform,
+    runCommand,
+    venvExists ? venvPython : undefined,
+  )
+  if (!pythonRuntime.installed) {
     steps.push({
       name: 'python_check',
       ok: false,
@@ -227,7 +226,9 @@ async function runSetup(): Promise<SetupResult> {
   steps.push({
     name: 'python_check',
     ok: true,
-    message: `Python ${pythonCheck.stdout.replace('Python ', '')}`,
+    message: pythonRuntime.source === 'venv'
+      ? `Python ${pythonRuntime.version}（使用现有虚拟环境）`
+      : `Python ${pythonRuntime.version}`,
   })
 
   // Step 2: Extract runtime files to ~/.claude/.runtime/
@@ -244,12 +245,21 @@ async function runSetup(): Promise<SetupResult> {
   }
 
   // Step 3: Create venv
-  const venvPython = isWindows
-    ? join(venvRoot, 'Scripts', 'python.exe')
-    : join(venvRoot, 'bin', 'python3')
-  const venvExists = await pathExists(venvPython)
   if (!venvExists) {
-    const venvResult = await runCommand(pythonCmd, ['-m', 'venv', venvRoot])
+    if (!pythonRuntime.command) {
+      steps.push({
+        name: 'venv',
+        ok: false,
+        message: '未找到可用于创建虚拟环境的 Python 命令',
+      })
+      return { success: false, steps }
+    }
+    const venvResult = await runCommand(pythonRuntime.command, [
+      ...pythonRuntime.prefixArgs,
+      '-m',
+      'venv',
+      venvRoot,
+    ])
     if (!venvResult.ok) {
       steps.push({
         name: 'venv',
@@ -345,9 +355,14 @@ type ComputerUseConfig = {
   }
 }
 
+type RequestAccessBody = {
+  sessionId?: string
+  request?: CuPermissionRequest
+}
+
 const DEFAULT_CONFIG: ComputerUseConfig = {
   authorizedApps: [],
-  grantFlags: { clipboardRead: true, clipboardWrite: true, systemKeyCombos: true },
+  grantFlags: DEFAULT_DESKTOP_GRANT_FLAGS,
 }
 
 async function loadConfig(): Promise<ComputerUseConfig> {
@@ -451,6 +466,29 @@ export async function handleComputerUseApi(
       return Response.json({ error: 'Unsupported platform' }, { status: 400 })
     }
     return Response.json({ ok: true })
+  }
+
+  if (action === 'request-access' && req.method === 'POST') {
+    try {
+      const body = (await req.json()) as RequestAccessBody
+      if (!body.sessionId || !body.request?.requestId) {
+        return Response.json(
+          { error: 'BAD_REQUEST', message: 'sessionId and request are required' },
+          { status: 400 },
+        )
+      }
+
+      const response = await computerUseApprovalService.requestApproval(
+        body.sessionId,
+        body.request,
+      )
+      return Response.json(response)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Computer Use approval failed'
+      const status = message.includes('not connected') ? 409 : 500
+      return Response.json({ error: 'COMPUTER_USE_APPROVAL_FAILED', message }, { status })
+    }
   }
 
   return Response.json(

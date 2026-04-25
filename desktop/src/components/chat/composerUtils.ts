@@ -1,4 +1,18 @@
+import type { SettingsTab } from '../../stores/uiStore'
+
+export const PANEL_SLASH_COMMANDS = [
+  { name: 'mcp', description: 'Open available MCP tools for the current chat context' },
+  { name: 'skills', description: 'Browse user-invocable skills for the current chat context' },
+] as const
+
+export const SETTINGS_SLASH_COMMANDS = [
+  { name: 'plugin', description: 'Open desktop plugin controls in Settings', tab: 'plugins' as const },
+  { name: 'plugins', description: 'Open desktop plugin controls in Settings', tab: 'plugins' as const },
+] as const
+
 export const FALLBACK_SLASH_COMMANDS = [
+  ...PANEL_SLASH_COMMANDS,
+  ...SETTINGS_SLASH_COMMANDS.map(({ name, description }) => ({ name, description })),
   { name: 'compact', description: 'Compact conversation context' },
   { name: 'clear', description: 'Clear conversation history' },
   { name: 'help', description: 'Show available commands' },
@@ -23,6 +37,30 @@ export const FALLBACK_SLASH_COMMANDS = [
 export type SlashCommandOption = {
   name: string
   description: string
+}
+
+export type SlashUiAction =
+  | {
+      type: 'panel'
+      command: typeof PANEL_SLASH_COMMANDS[number]['name']
+    }
+  | {
+      type: 'settings'
+      tab: SettingsTab
+    }
+
+export function resolveSlashUiAction(value: string): SlashUiAction | null {
+  const panelCommand = PANEL_SLASH_COMMANDS.find((command) => command.name === value)
+  if (panelCommand) {
+    return { type: 'panel', command: panelCommand.name }
+  }
+
+  const settingsCommand = SETTINGS_SLASH_COMMANDS.find((command) => command.name === value)
+  if (settingsCommand) {
+    return { type: 'settings', tab: settingsCommand.tab }
+  }
+
+  return null
 }
 
 export function mergeSlashCommands(

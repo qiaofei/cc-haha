@@ -47,7 +47,7 @@ export function ClaudeOfficialLogin() {
   if (status === null) {
     if (error) {
       return (
-        <div className="text-xs text-[var(--color-error,#dc2626)]">
+        <div className="text-xs text-[var(--color-error)]">
           {t('settings.claudeOfficialLogin.errorPrefix')}{error}
         </div>
       )
@@ -91,14 +91,14 @@ export function ClaudeOfficialLogin() {
         type="button"
         onClick={handleLogin}
         disabled={isLoading}
-        className="self-start px-4 py-2 text-sm rounded-md bg-[var(--color-accent,#c96342)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+        className="self-start rounded-md bg-[image:var(--gradient-btn-primary)] px-4 py-2 text-sm text-[var(--color-btn-primary-fg)] shadow-[var(--shadow-button-primary)] hover:brightness-105 disabled:opacity-50 transition-opacity"
       >
         {isLoading
           ? t('settings.claudeOfficialLogin.loginStarting')
           : t('settings.claudeOfficialLogin.loginButton')}
       </button>
       {error && (
-        <div className="text-xs text-[var(--color-error,#dc2626)]">
+        <div className="text-xs text-[var(--color-error)]">
           {t('settings.claudeOfficialLogin.errorPrefix')}{error}
         </div>
       )}

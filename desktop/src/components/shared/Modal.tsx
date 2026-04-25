@@ -25,13 +25,13 @@ export function Modal({ open, onClose, title, children, width = 560, footer }: M
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/50 transition-opacity duration-200"
+        className="absolute inset-0 bg-[var(--color-overlay-scrim)] transition-opacity duration-200"
         onClick={onClose}
       />
 
       {/* Modal content */}
       <div
-        className="relative bg-[var(--color-surface)] rounded-[var(--radius-xl)] shadow-[var(--shadow-modal)] max-h-[85vh] flex flex-col"
+        className="glass-panel relative rounded-[var(--radius-xl)] max-h-[85vh] flex flex-col"
         style={{ width, maxWidth: 'calc(100vw - 48px)' }}
         role="dialog"
         aria-modal="true"

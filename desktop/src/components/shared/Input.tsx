@@ -24,8 +24,8 @@ export function Input({ label, error, required, className = '', id, ...props }: 
           placeholder:text-[var(--color-text-tertiary)]
           transition-colors duration-150
           ${error
-            ? 'border-[var(--color-error)] focus:shadow-[0_0_0_3px_rgba(171,43,63,0.1)]'
-            : 'border-[var(--color-border)] focus:border-[var(--color-border-focus)] focus:shadow-[0_0_0_3px_rgba(153,153,153,0.1)]'
+            ? 'border-[var(--color-error)] focus:shadow-[var(--shadow-error-ring)]'
+            : 'border-[var(--color-border)] focus:border-[var(--color-border-focus)] focus:shadow-[var(--shadow-focus-ring)]'
           }
           outline-none
           ${className}

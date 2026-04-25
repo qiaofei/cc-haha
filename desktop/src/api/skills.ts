@@ -2,10 +2,21 @@ import { api } from './client'
 import type { SkillMeta, SkillDetail } from '../types/skill'
 
 export const skillsApi = {
-  list: () => api.get<{ skills: SkillMeta[] }>('/api/skills'),
+  list: (cwd?: string) => {
+    const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
+    return api.get<{ skills: SkillMeta[] }>(`/api/skills${query}`, { timeout: 120_000 })
+  },
 
-  detail: (source: string, name: string) =>
-    api.get<{ detail: SkillDetail }>(
-      `/api/skills/detail?source=${encodeURIComponent(source)}&name=${encodeURIComponent(name)}`,
-    ),
+  detail: (source: string, name: string, cwd?: string) => {
+    const query = new URLSearchParams({
+      source,
+      name,
+    })
+    if (cwd) query.set('cwd', cwd)
+
+    return api.get<{ detail: SkillDetail }>(
+      `/api/skills/detail?${query.toString()}`,
+      { timeout: 120_000 },
+    )
+  },
 }

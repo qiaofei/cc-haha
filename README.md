@@ -1,7 +1,7 @@
 # Claude Code Haha
 
 <p align="center">
-  <img src="docs/images/logo-horizontal.jpg" alt="Claude Code Haha" width="480">
+  <img src="docs/images/app-icon.png" alt="Claude Code Haha" width="240">
 </p>
 
 <div align="center">
@@ -211,6 +211,10 @@ http://127.0.0.1:2024
 ## 赞助与合作
 
 本项目由个人利用业余时间维护，欢迎企业或个人赞助支持持续开发，也可洽谈定制、集成或商务合作。
+
+| 赞助商 | 介绍 |
+|------|------|
+| <a href="https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler"><img src="docs/images/sponsors/legionproxy-logo.svg" width="180" alt="LegionProxy"></a> | [LegionProxy](https://legionproxy.io/?utm_source=github&utm_campaign=mediacrawler) 住宅代理专为账号注册与自动化打造，提供 74M+ 真实住宅 IP、195+ 国家覆盖、HTTP/3 高速连接，$0.60/GB 起。 |
 
 📧 **联系邮箱**：relakkes@gmail.com
 

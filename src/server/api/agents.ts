@@ -14,6 +14,7 @@
 import { AgentService } from '../services/agentService.js'
 import { taskService } from '../services/taskService.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
+import { resetTaskList } from '../../utils/tasks.js'
 import {
   resolveAgentModelDisplay,
   resolveAgentOverrides,
@@ -124,25 +125,30 @@ async function handleAgents(
 // GET /api/tasks/lists                   → list all task lists with summaries
 // GET /api/tasks/lists/:taskListId       → get all tasks for a specific task list
 // GET /api/tasks/lists/:taskListId/:id   → get a single task
+// POST /api/tasks/lists/:taskListId/reset → clear a completed task list
 
 async function handleTasksApi(
   req: Request,
   segments: string[],
 ): Promise<Response> {
-  if (req.method !== 'GET') {
-    throw new ApiError(
-      405,
-      `Method ${req.method} not allowed on /api/tasks`,
-      'METHOD_NOT_ALLOWED',
-    )
-  }
-
   const sub = segments[2] // 'lists' or undefined
 
-  // GET /api/tasks/lists — list all task lists
   if (sub === 'lists') {
     const taskListId = segments[3]
     const taskId = segments[4]
+
+    if (req.method === 'POST' && taskListId && taskId === 'reset') {
+      await resetTaskList(taskListId)
+      return Response.json({ ok: true })
+    }
+
+    if (req.method !== 'GET') {
+      throw new ApiError(
+        405,
+        `Method ${req.method} not allowed on /api/tasks/lists`,
+        'METHOD_NOT_ALLOWED',
+      )
+    }
 
     if (taskListId && taskId) {
       // GET /api/tasks/lists/:taskListId/:taskId
@@ -160,6 +166,14 @@ async function handleTasksApi(
     // GET /api/tasks/lists
     const lists = await taskService.listTaskLists()
     return Response.json({ lists })
+  }
+
+  if (req.method !== 'GET') {
+    throw new ApiError(
+      405,
+      `Method ${req.method} not allowed on /api/tasks`,
+      'METHOD_NOT_ALLOWED',
+    )
   }
 
   // GET /api/tasks — list all tasks

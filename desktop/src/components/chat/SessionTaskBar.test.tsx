@@ -4,6 +4,13 @@ import '@testing-library/jest-dom'
 import { SessionTaskBar } from './SessionTaskBar'
 import { useCLITaskStore } from '../../stores/cliTaskStore'
 
+vi.mock('../../api/cliTasks', () => ({
+  cliTasksApi: {
+    getTasksForList: vi.fn(),
+    resetTaskList: vi.fn(async () => ({ ok: true })),
+  },
+}))
+
 vi.mock('../../i18n', () => ({
   useTranslation: () => (key: string) => {
     const translations: Record<string, string> = {
@@ -46,7 +53,7 @@ describe('SessionTaskBar', () => {
     expect(screen.queryByRole('button', { name: 'Hide completed tasks' })).toBeNull()
   })
 
-  it('hides the bar after dismissing a completed task set', () => {
+  it('hides the bar after dismissing a completed task set', async () => {
     act(() => {
       useCLITaskStore.getState().setTasksFromTodos([
         { content: 'first', status: 'completed' },
@@ -58,10 +65,13 @@ describe('SessionTaskBar', () => {
       render(<SessionTaskBar />)
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide completed tasks' }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Hide completed tasks' }))
+      await Promise.resolve()
+    })
 
     expect(screen.queryByText('Tasks')).toBeNull()
-    expect(useCLITaskStore.getState().completedAndDismissed).toBe(true)
+    expect(useCLITaskStore.getState().tasks).toEqual([])
   })
 
   it('shows the bar again for a new task cycle after a previous completed set was dismissed', () => {

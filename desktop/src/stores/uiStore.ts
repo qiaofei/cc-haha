@@ -1,4 +1,25 @@
 import { create } from 'zustand'
+import type { ThemeMode } from '../types/settings'
+
+const THEME_STORAGE_KEY = 'cc-haha-theme'
+
+function getStoredTheme(): ThemeMode {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY)
+    if (stored === 'light' || stored === 'dark') return stored
+  } catch { /* localStorage unavailable */ }
+  return 'light'
+}
+
+export function applyTheme(theme: ThemeMode) {
+  if (typeof document === 'undefined') return
+  document.documentElement.setAttribute('data-theme', theme)
+  document.documentElement.style.colorScheme = theme
+}
+
+export function initializeTheme() {
+  applyTheme(getStoredTheme())
+}
 
 export type Toast = {
   id: string
@@ -7,19 +28,30 @@ export type Toast = {
   duration?: number
 }
 
-export type SettingsTab = 'providers' | 'permissions' | 'general' | 'adapters' | 'agents' | 'skills' | 'computerUse' | 'about'
+export type SettingsTab =
+  | 'providers'
+  | 'permissions'
+  | 'general'
+  | 'adapters'
+  | 'terminal'
+  | 'mcp'
+  | 'agents'
+  | 'skills'
+  | 'plugins'
+  | 'computerUse'
+  | 'about'
 
 type ActiveView = 'code' | 'scheduled' | 'terminal' | 'history' | 'settings'
 
 type UIStore = {
-  theme: 'light' | 'dark'
+  theme: ThemeMode
   sidebarOpen: boolean
   activeView: ActiveView
   pendingSettingsTab: SettingsTab | null
   activeModal: string | null
   toasts: Toast[]
 
-  setTheme: (theme: 'light' | 'dark') => void
+  setTheme: (theme: ThemeMode) => void
   toggleTheme: () => void
   toggleSidebar: () => void
   setSidebarOpen: (open: boolean) => void
@@ -34,7 +66,7 @@ type UIStore = {
 let toastCounter = 0
 
 export const useUIStore = create<UIStore>((set) => ({
-  theme: 'light',
+  theme: getStoredTheme(),
   sidebarOpen: true,
   activeView: 'code',
   pendingSettingsTab: null,
@@ -42,14 +74,16 @@ export const useUIStore = create<UIStore>((set) => ({
   toasts: [],
 
   setTheme: (theme) => {
-    document.documentElement.setAttribute('data-theme', theme)
+    applyTheme(theme)
+    try { localStorage.setItem(THEME_STORAGE_KEY, theme) } catch { /* noop */ }
     set({ theme })
   },
 
   toggleTheme: () => {
     set((state) => {
       const next = state.theme === 'light' ? 'dark' : 'light'
-      document.documentElement.setAttribute('data-theme', next)
+      applyTheme(next)
+      try { localStorage.setItem(THEME_STORAGE_KEY, next) } catch { /* noop */ }
       return { theme: next }
     })
   },

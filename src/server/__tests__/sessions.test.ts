@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { SessionService } from '../services/sessionService.js'
+import { clearCommandsCache } from '../../commands.js'
 import { sanitizePath } from '../../utils/sessionStoragePortable.js'
 
 // ============================================================================
@@ -45,6 +46,20 @@ async function writeSessionFile(
   return filePath
 }
 
+async function writeSkill(
+  rootDir: string,
+  skillName: string,
+  description: string,
+): Promise<void> {
+  const skillDir = path.join(rootDir, skillName)
+  await fs.mkdir(skillDir, { recursive: true })
+  await fs.writeFile(
+    path.join(skillDir, 'SKILL.md'),
+    ['---', `description: ${description}`, '---', '', `# ${skillName}`].join('\n'),
+    'utf-8',
+  )
+}
+
 // Sample entries matching real CLI format
 function makeSnapshotEntry(): Record<string, unknown> {
   return {
@@ -53,6 +68,22 @@ function makeSnapshotEntry(): Record<string, unknown> {
     snapshot: {
       messageId: crypto.randomUUID(),
       trackedFileBackups: {},
+      timestamp: '2026-01-01T00:00:00.000Z',
+    },
+    isSnapshotUpdate: false,
+  }
+}
+
+function makeFileHistorySnapshotEntry(
+  snapshotMessageId: string,
+  trackedFileBackups: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    type: 'file-history-snapshot',
+    messageId: crypto.randomUUID(),
+    snapshot: {
+      messageId: snapshotMessageId,
+      trackedFileBackups,
       timestamp: '2026-01-01T00:00:00.000Z',
     },
     isSnapshotUpdate: false,
@@ -111,6 +142,16 @@ function makeSessionMetaEntry(workDir: string): Record<string, unknown> {
   }
 }
 
+async function writeFileHistoryBackup(
+  sessionId: string,
+  backupFileName: string,
+  content: string,
+): Promise<void> {
+  const dir = path.join(tmpDir, 'file-history', sessionId)
+  await fs.mkdir(dir, { recursive: true })
+  await fs.writeFile(path.join(dir, backupFileName), content, 'utf-8')
+}
+
 // ============================================================================
 // SessionService tests
 // ============================================================================
@@ -122,6 +163,7 @@ describe('SessionService', () => {
   })
 
   afterEach(async () => {
+    clearCommandsCache()
     await cleanupTmpDir()
   })
 
@@ -245,6 +287,52 @@ describe('SessionService', () => {
 
     const messages = await service.getSessionMessages(sessionId)
     expect(messages).toHaveLength(2)
+  })
+
+  it('should hide synthetic interruption, no-response, and command breadcrumb transcript entries', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-project', sessionId, [
+      makeSnapshotEntry(),
+      makeUserEntry('正常用户消息', crypto.randomUUID()),
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '[Request interrupted by user]' }],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'No response requested.' }],
+          model: '<synthetic>',
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:03.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>',
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:04.000Z',
+      },
+      makeAssistantEntry('正常助手消息', crypto.randomUUID()),
+    ])
+
+    const messages = await service.getSessionMessages(sessionId)
+
+    expect(messages).toHaveLength(2)
+    expect(messages[0]).toMatchObject({ type: 'user', content: '正常用户消息' })
+    expect(messages[1]).toMatchObject({
+      type: 'assistant',
+      content: [{ type: 'text', text: '正常助手消息' }],
+    })
   })
 
   it('should reconstruct parent agent tool linkage from parentUuid chains', async () => {
@@ -690,6 +778,331 @@ describe('Sessions API', () => {
     const detailRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`)
     const detail = (await detailRes.json()) as { title: string }
     expect(detail.title).toBe('New Custom Title')
+  })
+
+  it('GET /api/sessions/:id/slash-commands should include user and project skills before CLI init', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const workDir = path.join(tmpDir, 'workspace', 'app')
+
+    await fs.mkdir(path.join(workDir, '.claude', 'skills'), { recursive: true })
+    await fs.mkdir(path.join(tmpDir, 'skills'), { recursive: true })
+    await writeSkill(path.join(tmpDir, 'skills'), 'user-skill', 'User skill description')
+    await writeSkill(path.join(workDir, '.claude', 'skills'), 'project-skill', 'Project skill description')
+
+    await writeSessionFile('-tmp-api-test', sessionId, [
+      makeSnapshotEntry(),
+      makeSessionMetaEntry(workDir),
+    ])
+
+    clearCommandsCache()
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/slash-commands`)
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as {
+      commands: Array<{ name: string; description: string }>
+    }
+
+    expect(body.commands).toContainEqual(
+      expect.objectContaining({ name: 'user-skill', description: 'User skill description' }),
+    )
+    expect(body.commands).toContainEqual(
+      expect.objectContaining({ name: 'project-skill', description: 'Project skill description' }),
+    )
+  })
+
+  it('POST /api/sessions/:id/rewind should preview and trim the active conversation chain', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const firstUserId = crypto.randomUUID()
+    const firstAssistantId = crypto.randomUUID()
+    const secondUserId = crypto.randomUUID()
+    const secondAssistantId = crypto.randomUUID()
+
+    await writeSessionFile('-tmp-api-test', sessionId, [
+      makeSnapshotEntry(),
+      {
+        parentUuid: null,
+        isSidechain: false,
+        type: 'user',
+        message: { role: 'user', content: 'first prompt' },
+        uuid: firstUserId,
+        timestamp: '2026-01-01T00:01:00.000Z',
+        userType: 'external',
+        cwd: '/tmp/test',
+        sessionId,
+      },
+      {
+        parentUuid: firstUserId,
+        isSidechain: false,
+        type: 'assistant',
+        message: {
+          model: 'claude-opus-4-7',
+          id: `msg_${crypto.randomUUID().slice(0, 20)}`,
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'first reply' }],
+        },
+        uuid: firstAssistantId,
+        timestamp: '2026-01-01T00:02:00.000Z',
+      },
+      {
+        parentUuid: firstAssistantId,
+        isSidechain: false,
+        type: 'user',
+        message: { role: 'user', content: 'second prompt' },
+        uuid: secondUserId,
+        timestamp: '2026-01-01T00:03:00.000Z',
+        userType: 'external',
+        cwd: '/tmp/test',
+        sessionId,
+      },
+      {
+        parentUuid: secondUserId,
+        isSidechain: false,
+        type: 'assistant',
+        message: {
+          model: 'claude-opus-4-7',
+          id: `msg_${crypto.randomUUID().slice(0, 20)}`,
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'second reply' }],
+        },
+        uuid: secondAssistantId,
+        timestamp: '2026-01-01T00:04:00.000Z',
+      },
+    ])
+
+    const previewRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userMessageIndex: 1, dryRun: true }),
+    })
+    expect(previewRes.status).toBe(200)
+
+    const previewBody = await previewRes.json() as {
+      conversation: { messagesRemoved: number }
+      code: { available: boolean }
+    }
+    expect(previewBody.conversation.messagesRemoved).toBe(2)
+    expect(previewBody.code.available).toBe(false)
+
+    const executeRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userMessageIndex: 1 }),
+    })
+    expect(executeRes.status).toBe(200)
+
+    const executeBody = await executeRes.json() as {
+      conversation: { messagesRemoved: number; removedMessageIds: string[] }
+    }
+    expect(executeBody.conversation.messagesRemoved).toBe(2)
+    expect(executeBody.conversation.removedMessageIds).toEqual([
+      secondUserId,
+      secondAssistantId,
+    ])
+
+    const remainingMessages = await service.getSessionMessages(sessionId)
+    expect(remainingMessages.map((message) => message.id)).toEqual([
+      firstUserId,
+      firstAssistantId,
+    ])
+  })
+
+  it('POST /api/sessions/:id/rewind should restore a single edited file', async () => {
+    const sessionId = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const workDir = path.join(tmpDir, 'single-file-fixture')
+    const targetFile = path.join(workDir, 'src', 'app.js')
+    const userId = crypto.randomUUID()
+    const assistantId = crypto.randomUUID()
+    const backupName = 'single-file@v1'
+
+    await fs.mkdir(path.dirname(targetFile), { recursive: true })
+    await fs.writeFile(
+      targetFile,
+      "export const ORIGINAL_VALUE = 'after-rewind'\n",
+      'utf-8',
+    )
+    await writeFileHistoryBackup(
+      sessionId,
+      backupName,
+      "export const ORIGINAL_VALUE = 'before-rewind'\n",
+    )
+
+    await writeSessionFile('-tmp-api-single-file', sessionId, [
+      makeSessionMetaEntry(workDir),
+      makeFileHistorySnapshotEntry(userId, {
+        'src/app.js': {
+          backupFileName: backupName,
+          version: 1,
+          backupTime: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+      {
+        ...makeUserEntry('edit app.js', userId),
+        cwd: workDir,
+        sessionId,
+      },
+      {
+        ...makeAssistantEntry('DONE', userId),
+        uuid: assistantId,
+      },
+    ])
+
+    const previewRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userMessageIndex: 0, dryRun: true }),
+    })
+    expect(previewRes.status).toBe(200)
+    const preview = await previewRes.json() as {
+      code: { available: boolean; filesChanged: string[] }
+    }
+    expect(preview.code.available).toBe(true)
+    expect(preview.code.filesChanged).toEqual([targetFile])
+
+    const executeRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userMessageIndex: 0 }),
+    })
+    expect(executeRes.status).toBe(200)
+    expect(await fs.readFile(targetFile, 'utf-8')).toBe(
+      "export const ORIGINAL_VALUE = 'before-rewind'\n",
+    )
+
+    const remainingMessages = await service.getSessionMessages(sessionId)
+    expect(remainingMessages).toHaveLength(0)
+  })
+
+  it('POST /api/sessions/:id/rewind should restore multiple files and remove created files', async () => {
+    const sessionId = 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const workDir = path.join(tmpDir, 'multi-file-fixture')
+    const appFile = path.join(workDir, 'src', 'app.js')
+    const readmeFile = path.join(workDir, 'README.md')
+    const createdFile = path.join(workDir, 'notes', 'generated.txt')
+    const userId = crypto.randomUUID()
+    const backupApp = 'multi-app@v1'
+    const backupReadme = 'multi-readme@v1'
+
+    await fs.mkdir(path.dirname(appFile), { recursive: true })
+    await fs.mkdir(path.dirname(createdFile), { recursive: true })
+    await fs.writeFile(appFile, "export const VALUE = 'edited'\n", 'utf-8')
+    await fs.writeFile(readmeFile, '# changed\n', 'utf-8')
+    await fs.writeFile(createdFile, 'new file\n', 'utf-8')
+    await writeFileHistoryBackup(sessionId, backupApp, "export const VALUE = 'original'\n")
+    await writeFileHistoryBackup(sessionId, backupReadme, '# original\n')
+
+    await writeSessionFile('-tmp-api-multi-file', sessionId, [
+      makeSessionMetaEntry(workDir),
+      makeFileHistorySnapshotEntry(userId, {
+        'src/app.js': {
+          backupFileName: backupApp,
+          version: 1,
+          backupTime: '2026-01-01T00:00:00.000Z',
+        },
+        'README.md': {
+          backupFileName: backupReadme,
+          version: 1,
+          backupTime: '2026-01-01T00:00:00.000Z',
+        },
+        'notes/generated.txt': {
+          backupFileName: null,
+          version: 1,
+          backupTime: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+      {
+        ...makeUserEntry('edit multiple files', userId),
+        cwd: workDir,
+        sessionId,
+      },
+      makeAssistantEntry('DONE', userId),
+    ])
+
+    const previewRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userMessageIndex: 0, dryRun: true }),
+    })
+    expect(previewRes.status).toBe(200)
+    const preview = await previewRes.json() as {
+      code: { available: boolean; filesChanged: string[] }
+    }
+    expect(preview.code.available).toBe(true)
+    expect(preview.code.filesChanged.sort()).toEqual([
+      appFile,
+      createdFile,
+      readmeFile,
+    ].sort())
+
+    const executeRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userMessageIndex: 0 }),
+    })
+    expect(executeRes.status).toBe(200)
+
+    expect(await fs.readFile(appFile, 'utf-8')).toBe("export const VALUE = 'original'\n")
+    expect(await fs.readFile(readmeFile, 'utf-8')).toBe('# original\n')
+    await expect(fs.stat(createdFile)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('POST /api/sessions/:id/rewind should restore the previous version when rewinding the second edit of the same file', async () => {
+    const sessionId = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const workDir = path.join(tmpDir, 'same-file-two-turns')
+    const targetFile = path.join(workDir, 'src', 'app.js')
+    const firstUserId = crypto.randomUUID()
+    const secondUserId = crypto.randomUUID()
+    const backupV1 = 'same-file@v1'
+    const backupV2 = 'same-file@v2'
+
+    await fs.mkdir(path.dirname(targetFile), { recursive: true })
+    await fs.writeFile(targetFile, "export const STEP = 'v2'\n", 'utf-8')
+    await writeFileHistoryBackup(sessionId, backupV1, "export const STEP = 'base'\n")
+    await writeFileHistoryBackup(sessionId, backupV2, "export const STEP = 'v1'\n")
+
+    await writeSessionFile('-tmp-api-two-turns', sessionId, [
+      makeSessionMetaEntry(workDir),
+      makeFileHistorySnapshotEntry(firstUserId, {
+        'src/app.js': {
+          backupFileName: backupV1,
+          version: 1,
+          backupTime: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+      {
+        ...makeUserEntry('make v1', firstUserId),
+        cwd: workDir,
+        sessionId,
+      },
+      makeAssistantEntry('DONE', firstUserId),
+      makeFileHistorySnapshotEntry(secondUserId, {
+        'src/app.js': {
+          backupFileName: backupV2,
+          version: 2,
+          backupTime: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+      {
+        ...makeUserEntry('make v2', secondUserId),
+        cwd: workDir,
+        sessionId,
+      },
+      makeAssistantEntry('DONE', secondUserId),
+    ])
+
+    const executeRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userMessageIndex: 1 }),
+    })
+    expect(executeRes.status).toBe(200)
+    expect(await fs.readFile(targetFile, 'utf-8')).toBe("export const STEP = 'v1'\n")
+
+    const remainingMessages = await service.getSessionMessages(sessionId)
+    expect(remainingMessages.map((message) => message.id)).toHaveLength(2)
+    expect(remainingMessages[0]?.id).toBe(firstUserId)
   })
 
   // --------------------------------------------------------------------------

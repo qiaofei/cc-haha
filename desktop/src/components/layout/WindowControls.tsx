@@ -77,7 +77,7 @@ export function WindowControls() {
       <button
         onClick={() => runWindowAction(() => win.close())}
         aria-label="Close window"
-        className="w-[46px] h-full flex items-center justify-center text-[var(--color-text-secondary)] hover:bg-[#e81123] hover:text-white transition-colors"
+        className="w-[46px] h-full flex items-center justify-center text-[var(--color-text-secondary)] hover:bg-[var(--color-window-close-hover)] hover:text-white transition-colors"
       >
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2">
           <line x1="0" y1="0" x2="10" y2="10" />

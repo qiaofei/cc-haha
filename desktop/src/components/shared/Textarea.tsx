@@ -25,7 +25,7 @@ export function Textarea({ label, error, required, className = '', id, ...props 
           transition-colors duration-150
           ${error
             ? 'border-[var(--color-error)]'
-            : 'border-[var(--color-border)] focus:border-[var(--color-border-focus)] focus:shadow-[0_0_0_3px_rgba(153,153,153,0.1)]'
+            : 'border-[var(--color-border)] focus:border-[var(--color-border-focus)] focus:shadow-[var(--shadow-focus-ring)]'
           }
           outline-none
           ${className}

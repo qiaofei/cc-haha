@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { useSkillStore } from '../../stores/skillStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { useTranslation } from '../../i18n'
 import type { SkillMeta, SkillSource } from '../../types/skill'
 
@@ -28,11 +29,15 @@ function estimateTokens(contentLength: number) {
 export function SkillList() {
   const { skills, isLoading, error, fetchSkills, fetchSkillDetail } =
     useSkillStore()
+  const sessions = useSessionStore((s) => s.sessions)
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const t = useTranslation()
+  const activeSession = sessions.find((session) => session.id === activeSessionId)
+  const currentWorkDir = activeSession?.workDir || undefined
 
   useEffect(() => {
-    fetchSkills()
-  }, [fetchSkills])
+    fetchSkills(currentWorkDir)
+  }, [fetchSkills, currentWorkDir])
 
   const grouped = useMemo(() => {
     const result: Partial<Record<SkillSource, SkillMeta[]>> = {}
@@ -175,7 +180,7 @@ export function SkillList() {
                     key={`${skill.source}-${skill.name}`}
                     onClick={() =>
                       skill.hasDirectory &&
-                      fetchSkillDetail(skill.source, skill.name)
+                      fetchSkillDetail(skill.source, skill.name, currentWorkDir, 'skills')
                     }
                     disabled={!skill.hasDirectory}
                     className="group rounded-xl border border-transparent px-3 py-3 text-left transition-all hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)] disabled:opacity-60 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:border-transparent"

@@ -9,6 +9,7 @@
  */
 
 import * as fs from 'fs/promises'
+import { randomBytes } from 'node:crypto'
 import * as path from 'path'
 import * as os from 'os'
 import { ApiError } from '../middleware/errorHandler.js'
@@ -24,6 +25,7 @@ const VALID_PERMISSION_MODES = [
 export type PermissionMode = (typeof VALID_PERMISSION_MODES)[number]
 
 export class SettingsService {
+  private static writeLocks = new Map<string, Promise<void>>()
   private projectRoot?: string
 
   constructor(projectRoot?: string) {
@@ -93,29 +95,67 @@ export class SettingsService {
   // ---------------------------------------------------------------------------
 
   /** 原子写入 JSON 文件 */
+  private async withWriteLock<T>(
+    filePath: string,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    const previousWrite = SettingsService.writeLocks.get(filePath) ?? Promise.resolve()
+    const nextWrite = previousWrite
+      .catch(() => {})
+      .then(task)
+
+    SettingsService.writeLocks.set(filePath, nextWrite)
+
+    try {
+      return await nextWrite
+    } finally {
+      if (SettingsService.writeLocks.get(filePath) === nextWrite) {
+        SettingsService.writeLocks.delete(filePath)
+      }
+    }
+  }
+
   private async writeJsonFile(
     filePath: string,
     data: Record<string, unknown>,
   ): Promise<void> {
     const dir = path.dirname(filePath)
-    await fs.mkdir(dir, { recursive: true })
+    const contents = JSON.stringify(data, null, 2) + '\n'
+    let lastError: unknown
 
-    const tmpFile = `${filePath}.tmp.${Date.now()}`
-    try {
-      await fs.writeFile(tmpFile, JSON.stringify(data, null, 2) + '\n', 'utf-8')
-      await fs.rename(tmpFile, filePath)
-    } catch (err) {
-      // 清理临时文件（best-effort）
-      await fs.unlink(tmpFile).catch(() => {})
-      throw ApiError.internal(`Failed to write settings to ${filePath}: ${err}`)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const tmpFile = `${filePath}.tmp.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}`
+      try {
+        await fs.mkdir(dir, { recursive: true })
+        await fs.writeFile(tmpFile, contents, 'utf-8')
+        await fs.rename(tmpFile, filePath)
+        return
+      } catch (err) {
+        lastError = err
+        await fs.unlink(tmpFile).catch(() => {})
+
+        if (
+          (err as NodeJS.ErrnoException).code !== 'ENOENT' ||
+          attempt === 1
+        ) {
+          break
+        }
+      }
     }
+
+    throw ApiError.internal(
+      `Failed to write settings to ${filePath}: ${lastError}`,
+    )
   }
 
   /** 更新用户级设置（浅合并） */
   async updateUserSettings(settings: Record<string, unknown>): Promise<void> {
-    const current = await this.getUserSettings()
-    const merged = Object.assign({}, current, settings)
-    await this.writeJsonFile(this.getUserSettingsPath(), merged)
+    const filePath = this.getUserSettingsPath()
+    await this.withWriteLock(filePath, async () => {
+      const current = await this.readJsonFile(filePath)
+      const merged = Object.assign({}, current, settings)
+      await this.writeJsonFile(filePath, merged)
+    })
   }
 
   /** 更新项目级设置（浅合并） */
@@ -124,9 +164,11 @@ export class SettingsService {
     projectRoot?: string,
   ): Promise<void> {
     const filePath = this.getProjectSettingsPath(projectRoot)
-    const current = await this.readJsonFile(filePath)
-    const merged = Object.assign({}, current, settings)
-    await this.writeJsonFile(filePath, merged)
+    await this.withWriteLock(filePath, async () => {
+      const current = await this.readJsonFile(filePath)
+      const merged = Object.assign({}, current, settings)
+      await this.writeJsonFile(filePath, merged)
+    })
   }
 
   // ---------------------------------------------------------------------------

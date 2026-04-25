@@ -128,7 +128,7 @@ function AgentToolGroup({
   }, [isStreaming])
 
   return (
-    <div className="mb-2 ml-10">
+    <div className="mb-2">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
@@ -201,7 +201,7 @@ function ToolCallGroupMulti({ toolCalls, resultMap, childToolCallsByParent, isSt
   }, [hasNestedToolCalls, isStreaming])
 
   return (
-    <div className="mb-2 ml-10">
+    <div className="mb-2">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}

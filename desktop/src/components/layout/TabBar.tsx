@@ -1,10 +1,12 @@
-import { useRef, useState, useEffect, useCallback } from 'react'
+import { forwardRef, useRef, useState, useEffect, useCallback } from 'react'
 import { useTabStore, type Tab } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useTranslation } from '../../i18n'
 import { WindowControls, showWindowControls } from './WindowControls'
 
 const TAB_WIDTH = 180
+const DRAG_START_THRESHOLD = 4
+const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
 
 export function TabBar() {
   const tabs = useTabStore((s) => s.tabs)
@@ -20,8 +22,24 @@ export function TabBar() {
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null)
   const [closingTabId, setClosingTabId] = useState<string | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null)
+  const [dragOffsetX, setDragOffsetX] = useState(0)
   const dragIndexRef = useRef<number | null>(null)
+  const pendingDragRef = useRef<{ index: number; startX: number; startY: number } | null>(null)
+  const suppressClickRef = useRef(false)
+  const tabRefs = useRef(new Map<string, HTMLDivElement | null>())
+  const startDraggingRef = useRef<(() => Promise<void>) | null>(null)
   const t = useTranslation()
+
+  useEffect(() => {
+    if (!isTauri) return
+    import(/* @vite-ignore */ '@tauri-apps/api/window')
+      .then(({ getCurrentWindow }) => {
+        const win = getCurrentWindow()
+        startDraggingRef.current = () => win.startDragging()
+      })
+      .catch(() => {})
+  }, [])
 
   const updateScrollState = useCallback(() => {
     const el = scrollRef.current
@@ -119,38 +137,102 @@ export function TabBar() {
     }
   }
 
-  const handleDragStart = (index: number) => {
-    dragIndexRef.current = index
-  }
+  const getTargetIndexFromClientX = useCallback((clientX: number) => {
+    for (let index = 0; index < tabs.length; index++) {
+      const tab = tabs[index]
+      if (!tab) continue
+      const el = tabRefs.current.get(tab.sessionId)
+      if (!el) continue
+      const rect = el.getBoundingClientRect()
+      if (clientX < rect.left + rect.width / 2) return index
+    }
 
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault()
-    if (dragIndexRef.current === null || dragIndexRef.current === index) {
+    return tabs.length > 0 ? tabs.length - 1 : null
+  }, [tabs])
+
+  const finalizeDrag = useCallback((targetIndex: number | null) => {
+    if (dragIndexRef.current !== null && targetIndex !== null && dragIndexRef.current !== targetIndex) {
+      moveTab(dragIndexRef.current, targetIndex)
+    }
+    dragIndexRef.current = null
+    pendingDragRef.current = null
+    setDraggingSessionId(null)
+    setDragOffsetX(0)
+    setDragOverIndex(null)
+  }, [moveTab])
+
+  const handlePointerMove = useCallback((event: MouseEvent) => {
+    const pending = pendingDragRef.current
+    if (!pending) return
+
+    const deltaX = Math.abs(event.clientX - pending.startX)
+    const deltaY = Math.abs(event.clientY - pending.startY)
+
+    if (dragIndexRef.current === null) {
+      if (Math.max(deltaX, deltaY) < DRAG_START_THRESHOLD) return
+      dragIndexRef.current = pending.index
+      suppressClickRef.current = true
+      setDraggingSessionId(tabs[pending.index]?.sessionId ?? null)
+    }
+
+    setDragOffsetX(event.clientX - pending.startX)
+
+    const targetIndex = getTargetIndexFromClientX(event.clientX)
+    if (targetIndex === null || targetIndex === dragIndexRef.current) {
       setDragOverIndex(null)
       return
     }
-    setDragOverIndex(index)
-  }
 
-  const handleDrop = (index: number) => {
-    if (dragIndexRef.current !== null && dragIndexRef.current !== index) {
-      moveTab(dragIndexRef.current, index)
+    setDragOverIndex(targetIndex)
+  }, [getTargetIndexFromClientX])
+
+  const handlePointerUp = useCallback(() => {
+    finalizeDrag(dragOverIndex)
+  }, [dragOverIndex, finalizeDrag])
+
+  useEffect(() => {
+    window.addEventListener('mousemove', handlePointerMove)
+    window.addEventListener('mouseup', handlePointerUp)
+    return () => {
+      window.removeEventListener('mousemove', handlePointerMove)
+      window.removeEventListener('mouseup', handlePointerUp)
     }
-    dragIndexRef.current = null
-    setDragOverIndex(null)
+  }, [handlePointerMove, handlePointerUp])
+
+  useEffect(() => {
+    if (!draggingSessionId) return
+    const previousCursor = document.body.style.cursor
+    document.body.style.cursor = 'grabbing'
+    return () => {
+      document.body.style.cursor = previousCursor
+    }
+  }, [draggingSessionId])
+
+  const handleTabMouseDown = (event: React.MouseEvent, index: number) => {
+    if (event.button !== 0) return
+    pendingDragRef.current = { index, startX: event.clientX, startY: event.clientY }
   }
 
-  const handleDragEnd = () => {
-    dragIndexRef.current = null
-    setDragOverIndex(null)
+  const handleTabClick = (sessionId: string) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
+    setActiveTab(sessionId)
   }
+
+  const handleScrollRegionMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || event.target !== scrollRef.current) return
+    const startDragging = startDraggingRef.current
+    if (!startDragging) return
+    void startDragging().catch(() => {})
+  }, [])
 
   if (tabs.length === 0 && !showWindowControls) return null
 
   return (
     <div
       data-testid="tab-bar"
-      data-tauri-drag-region
       className="flex items-stretch bg-[var(--color-surface-container)] min-h-[37px] select-none border-b border-[var(--color-border)]"
     >
 
@@ -160,23 +242,37 @@ export function TabBar() {
         </button>
       )}
 
-      <div ref={scrollRef} className="flex-1 flex items-stretch overflow-x-hidden" onDragOver={(e) => e.preventDefault()}>
+      <div
+        ref={scrollRef}
+        className="tab-bar-hit-area flex-1 flex items-stretch overflow-x-hidden"
+        onDragOver={(e) => e.preventDefault()}
+        onMouseDown={handleScrollRegionMouseDown}
+      >
         {tabs.map((tab, index) => (
           <TabItem
             key={tab.sessionId}
+            ref={(node) => { tabRefs.current.set(tab.sessionId, node) }}
             tab={tab}
             isActive={tab.sessionId === activeTabId}
             isDragOver={dragOverIndex === index}
-            onClick={() => setActiveTab(tab.sessionId)}
+            isDragging={tab.sessionId === draggingSessionId}
+            dragOffsetX={tab.sessionId === draggingSessionId ? dragOffsetX : 0}
+            onClick={() => handleTabClick(tab.sessionId)}
             onClose={() => handleClose(tab.sessionId)}
             onContextMenu={(e) => handleContextMenu(e, tab.sessionId)}
-            onDragStart={() => handleDragStart(index)}
-            onDragOver={(e) => handleDragOver(e, index)}
-            onDrop={() => handleDrop(index)}
-            onDragEnd={handleDragEnd}
+            onMouseDown={(event) => handleTabMouseDown(event, index)}
           />
         ))}
       </div>
+
+      {isTauri && (
+        <div
+          data-testid="tab-bar-drag-gutter"
+          data-tauri-drag-region
+          aria-hidden="true"
+          className={`flex-shrink-0 min-h-[37px] ${showWindowControls ? 'w-3' : 'w-4'}`}
+        />
+      )}
 
       {canScrollRight && (
         <button onClick={() => scroll('right')} className="flex-shrink-0 w-7 h-[37px] flex items-center justify-center text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]">
@@ -259,36 +355,40 @@ export function TabBar() {
   )
 }
 
-function TabItem({ tab, isActive, isDragOver, onClick, onClose, onContextMenu, onDragStart, onDragOver, onDrop, onDragEnd }: {
+const TabItem = forwardRef<HTMLDivElement, {
   tab: Tab
   isActive: boolean
   isDragOver: boolean
+  isDragging: boolean
+  dragOffsetX: number
   onClick: () => void
   onClose: () => void
   onContextMenu: (e: React.MouseEvent) => void
-  onDragStart: () => void
-  onDragOver: (e: React.DragEvent) => void
-  onDrop: () => void
-  onDragEnd: () => void
-}) {
+  onMouseDown: (event: React.MouseEvent) => void
+}>(({ tab, isActive, isDragOver, isDragging, dragOffsetX, onClick, onClose, onContextMenu, onMouseDown }, ref) => {
   return (
     <div
-      draggable
+      ref={ref}
+      data-dragging={isDragging ? 'true' : 'false'}
       onClick={onClick}
+      onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      onDragEnd={onDragEnd}
       className={`
-        flex-shrink-0 flex items-center gap-1.5 px-3 min-h-[37px] cursor-pointer group transition-colors relative
+        tab-bar-hit-area group flex-shrink-0 flex items-center gap-1.5 px-3 min-h-[37px] relative
+        ${isDragging ? 'z-20 cursor-grabbing' : 'cursor-grab'}
+        transition-[background-color,box-shadow,opacity,transform] duration-150 ease-out
         ${isActive
           ? 'bg-[var(--color-surface)]'
           : 'bg-transparent hover:bg-[var(--color-surface-hover)]'
         }
-        ${isDragOver ? 'before:absolute before:left-0 before:top-[6px] before:bottom-[6px] before:w-[2px] before:bg-[var(--color-brand)] before:rounded-full' : ''}
+        ${isDragging ? 'opacity-95 shadow-[0_10px_24px_rgba(0,0,0,0.18)] ring-1 ring-[var(--color-border)]' : ''}
+        ${isDragOver ? 'before:absolute before:left-0 before:top-[4px] before:bottom-[4px] before:w-[3px] before:bg-[var(--color-brand)] before:rounded-full before:shadow-[0_0_0_1px_rgba(255,255,255,0.25)]' : ''}
       `}
-      style={{ width: TAB_WIDTH, maxWidth: TAB_WIDTH }}
+      style={{
+        width: TAB_WIDTH,
+        maxWidth: TAB_WIDTH,
+        transform: isDragging ? `translateX(${dragOffsetX}px) scale(1.02)` : undefined,
+      }}
     >
       {tab.type === 'session' && tab.status === 'running' && (
         <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse flex-shrink-0" />
@@ -308,11 +408,15 @@ function TabItem({ tab, isActive, isDragOver, onClick, onClose, onContextMenu, o
       </span>
 
       <button
+        type="button"
+        aria-label={`Close ${tab.title || 'Untitled'}`}
+        onMouseDown={(e) => { e.stopPropagation() }}
         onClick={(e) => { e.stopPropagation(); onClose() }}
-        className="flex-shrink-0 w-4 h-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-hover)] transition-opacity text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]"
+        className="flex-shrink-0 -mr-0.5 inline-flex h-3 w-3 items-center justify-center bg-transparent p-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-[opacity,color] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] focus-visible:outline-none"
       >
-        <span className="material-symbols-outlined text-[14px]">close</span>
+        <span className="material-symbols-outlined text-[11px] leading-none">close</span>
       </button>
     </div>
   )
-}
+})
+TabItem.displayName = 'TabItem'

@@ -68,6 +68,35 @@ marked.setOptions({
 })
 marked.use({ renderer })
 
+function enhanceMarkdownHtml(html: string): string {
+  const cleanHtml = DOMPurify.sanitize(html, {
+    ADD_TAGS: ['use'],
+    ADD_ATTR: ['xlink:href'],
+  })
+
+  if (typeof document === 'undefined') {
+    return cleanHtml
+  }
+
+  const container = document.createElement('div')
+  container.innerHTML = cleanHtml
+
+  container.querySelectorAll('table').forEach((table) => {
+    if (table.parentElement?.classList.contains('md-table-wrap')) return
+    const wrapper = document.createElement('div')
+    wrapper.className = 'md-table-wrap'
+    table.parentNode?.insertBefore(wrapper, table)
+    wrapper.appendChild(table)
+  })
+
+  container.querySelectorAll('a[href]').forEach((link) => {
+    link.setAttribute('target', '_blank')
+    link.setAttribute('rel', 'noreferrer noopener')
+  })
+
+  return container.innerHTML
+}
+
 function parseMarkdown(content: string): { html: string; codeBlocks: CodeBlock[] } {
   pendingCodeBlocks = []
   const html = marked.parse(content) as string
@@ -76,19 +105,20 @@ function parseMarkdown(content: string): { html: string; codeBlocks: CodeBlock[]
   return { html, codeBlocks }
 }
 
-const BASE_PROSE_CLASSES = `prose prose-sm max-w-none text-[var(--color-text-primary)]
+const BASE_PROSE_CLASSES = `markdown-prose prose prose-sm max-w-none text-[var(--color-text-primary)]
   prose-headings:text-[var(--color-text-primary)] prose-headings:font-semibold
   prose-p:my-2 prose-p:leading-relaxed
   prose-p:break-words
-  prose-code:text-[13px] prose-code:font-[var(--font-mono)] prose-code:bg-[var(--color-surface-info)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded
+  prose-code:text-[13px] prose-code:text-[var(--color-code-fg)] prose-code:font-[var(--font-mono)] prose-code:bg-[var(--color-code-bg)] prose-code:border prose-code:border-[var(--color-border)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:before:hidden prose-code:after:hidden
   prose-pre:!bg-transparent prose-pre:!p-0 prose-pre:!shadow-none
   prose-a:text-[var(--color-text-accent)] prose-a:no-underline hover:prose-a:underline
   prose-strong:text-[var(--color-text-primary)]
   prose-ul:my-2 prose-ol:my-2
   prose-li:my-0.5
-  prose-table:w-full prose-table:table-auto prose-table:text-sm
-  prose-th:bg-[var(--color-surface-info)] prose-th:px-3 prose-th:py-2 prose-th:whitespace-normal prose-th:break-words prose-th:align-top
-  prose-td:px-3 prose-td:py-2 prose-td:border-[var(--color-border)] prose-td:whitespace-normal prose-td:break-words prose-td:align-top`
+  prose-table:my-0 prose-table:w-full prose-table:table-auto prose-table:text-sm
+  prose-th:bg-[var(--color-surface-info)] prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:whitespace-normal prose-th:break-words prose-th:align-top prose-th:border-b prose-th:border-[var(--color-border)]
+  prose-td:px-3 prose-td:py-2 prose-td:border-b prose-td:border-[var(--color-border)] prose-td:whitespace-normal prose-td:break-words prose-td:align-top prose-td:bg-[var(--color-surface)]
+  [&_.md-table-wrap]:my-5 [&_.md-table-wrap]:overflow-x-auto [&_.md-table-wrap]:rounded-xl [&_.md-table-wrap]:border [&_.md-table-wrap]:border-[var(--color-border)] [&_.md-table-wrap]:bg-[var(--color-surface-container-lowest)]`
 
 const DOCUMENT_PROSE_CLASSES = `
   prose-p:text-[15px] prose-p:leading-7
@@ -104,9 +134,7 @@ const DOCUMENT_PROSE_CLASSES = `
   prose-ul:pl-5 prose-ul:[&>li]:marker:text-[var(--color-text-tertiary)]
   prose-ol:pl-5 prose-ol:[&>li]:marker:text-[var(--color-text-tertiary)]
   prose-li:my-1.5
-  prose-table:my-5
-  prose-th:text-left
-  prose-td:bg-[var(--color-surface)]`
+  prose-table:my-0`
 
 function getProseClasses(variant: 'default' | 'document', className?: string) {
   return [BASE_PROSE_CLASSES, variant === 'document' ? DOCUMENT_PROSE_CLASSES : '', className ?? '']
@@ -170,7 +198,7 @@ export function MarkdownRenderer({ content, variant = 'default', className }: Pr
   }, [])
 
   if (codeBlocks.length === 0) {
-    const cleanHtml = DOMPurify.sanitize(html, { ADD_TAGS: ['use'], ADD_ATTR: ['xlink:href'] })
+    const cleanHtml = enhanceMarkdownHtml(html)
     return (
       <div
         className={proseClasses}
@@ -184,7 +212,7 @@ export function MarkdownRenderer({ content, variant = 'default', className }: Pr
     <div className={proseClasses} onClick={handleClick}>
       {parts.map((part, i) =>
         part.type === 'html' ? (
-          <div key={i} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(part.content, { ADD_TAGS: ['use'], ADD_ATTR: ['xlink:href'] }) }} />
+          <div key={i} dangerouslySetInnerHTML={{ __html: enhanceMarkdownHtml(part.content) }} />
         ) : shouldRenderAsMermaid(part.block) ? (
           <MermaidRenderer key={part.block.id} code={part.block.code} />
         ) : (

@@ -21,6 +21,11 @@ export const cliTasksApi = {
     return api.get<TaskResponse>(`/api/tasks/lists/${encodeURIComponent(taskListId)}/${taskId}`)
   },
 
+  /** Clear all persisted tasks for a completed task list */
+  resetTaskList(taskListId: string) {
+    return api.post<{ ok: true }>(`/api/tasks/lists/${encodeURIComponent(taskListId)}/reset`)
+  },
+
   /** List all tasks across all task lists */
   listAll() {
     return api.get<TasksResponse>('/api/tasks')

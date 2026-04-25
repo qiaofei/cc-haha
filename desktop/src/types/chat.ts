@@ -1,13 +1,27 @@
 import type { PermissionMode } from './settings'
+import type { RuntimeSelection } from './runtime'
 
 // Source: src/server/ws/events.ts
 
 // ─── Client → Server ──────────────────────────────────────────────
 
 export type ClientMessage =
+  | { type: 'prewarm_session' }
   | { type: 'user_message'; content: string; attachments?: AttachmentRef[] }
-  | { type: 'permission_response'; requestId: string; allowed: boolean; rule?: string }
+  | {
+      type: 'permission_response'
+      requestId: string
+      allowed: boolean
+      rule?: string
+      updatedInput?: Record<string, unknown>
+    }
+  | {
+      type: 'computer_use_permission_response'
+      requestId: string
+      response: ComputerUsePermissionResponse
+    }
   | { type: 'set_permission_mode'; mode: PermissionMode }
+  | ({ type: 'set_runtime_config' } & RuntimeSelection)
   | { type: 'stop_generation' }
   | { type: 'ping' }
 
@@ -34,7 +48,19 @@ export type ServerMessage =
   | { type: 'content_delta'; text?: string; toolInput?: string }
   | { type: 'tool_use_complete'; toolName: string; toolUseId: string; input: unknown; parentToolUseId?: string }
   | { type: 'tool_result'; toolUseId: string; content: unknown; isError: boolean; parentToolUseId?: string }
-  | { type: 'permission_request'; requestId: string; toolName: string; input: unknown; description?: string }
+  | {
+      type: 'permission_request'
+      requestId: string
+      toolName: string
+      toolUseId?: string
+      input: unknown
+      description?: string
+    }
+  | {
+      type: 'computer_use_permission_request'
+      requestId: string
+      request: ComputerUsePermissionRequest
+    }
   | { type: 'message_complete'; usage: TokenUsage }
   | { type: 'thinking'; text: string }
   | { type: 'status'; state: ChatState; verb?: string; elapsed?: number; tokens?: number }
@@ -63,6 +89,56 @@ export type TeamMemberStatus = {
   currentTask?: string
 }
 
+export type ComputerUseGrantFlags = {
+  clipboardRead: boolean
+  clipboardWrite: boolean
+  systemKeyCombos: boolean
+}
+
+export type ComputerUseResolvedApp = {
+  bundleId: string
+  displayName: string
+  path?: string
+  iconDataUrl?: string
+}
+
+export type ComputerUseResolvedAppRequest = {
+  requestedName: string
+  resolved?: ComputerUseResolvedApp
+  isSentinel: boolean
+  alreadyGranted: boolean
+  proposedTier: 'read' | 'click' | 'full'
+}
+
+export type ComputerUsePermissionRequest = {
+  requestId: string
+  reason: string
+  apps: ComputerUseResolvedAppRequest[]
+  requestedFlags: Partial<ComputerUseGrantFlags>
+  screenshotFiltering: 'native' | 'none'
+  tccState?: {
+    accessibility: boolean
+    screenRecording: boolean
+  }
+  willHide?: Array<{ bundleId: string; displayName: string }>
+  autoUnhideEnabled?: boolean
+}
+
+export type ComputerUsePermissionResponse = {
+  granted: Array<{
+    bundleId: string
+    displayName: string
+    grantedAt: number
+    tier?: 'read' | 'click' | 'full'
+  }>
+  denied: Array<{
+    bundleId: string
+    reason: 'user_denied' | 'not_installed'
+  }>
+  flags: ComputerUseGrantFlags
+  userConsented?: boolean
+}
+
 export type AgentTaskNotification = {
   taskId: string
   toolUseId: string
@@ -87,6 +163,15 @@ export type UIMessage =
   | { id: string; type: 'tool_use'; toolName: string; toolUseId: string; input: unknown; timestamp: number; parentToolUseId?: string }
   | { id: string; type: 'tool_result'; toolUseId: string; content: unknown; isError: boolean; timestamp: number; parentToolUseId?: string }
   | { id: string; type: 'system'; content: string; timestamp: number }
-  | { id: string; type: 'permission_request'; requestId: string; toolName: string; input: unknown; description?: string; timestamp: number }
+  | {
+      id: string
+      type: 'permission_request'
+      requestId: string
+      toolName: string
+      toolUseId?: string
+      input: unknown
+      description?: string
+      timestamp: number
+    }
   | { id: string; type: 'error'; message: string; code: string; timestamp: number }
   | { id: string; type: 'task_summary'; tasks: TaskSummaryItem[]; timestamp: number }

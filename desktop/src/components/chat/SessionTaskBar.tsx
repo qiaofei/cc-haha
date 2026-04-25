@@ -26,7 +26,7 @@ export function SessionTaskBar() {
     expanded,
     toggleExpanded,
     completedAndDismissed,
-    markCompletedAndDismissed,
+    resetCompletedTasks,
   } = useCLITaskStore()
   const t = useTranslation()
 
@@ -91,7 +91,7 @@ export function SessionTaskBar() {
             <button
               type="button"
               aria-label={t('tasks.dismissCompleted')}
-              onClick={markCompletedAndDismissed}
+              onClick={() => { void resetCompletedTasks() }}
               className="flex shrink-0 items-center justify-center rounded-[var(--radius-md)] p-1.5 text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-container-low)] hover:text-[var(--color-text-primary)] transition-colors"
             >
               <span className="material-symbols-outlined text-[16px]">close</span>
